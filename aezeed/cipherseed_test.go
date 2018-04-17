@@ -33,7 +33,7 @@ var (
 	version0TestVectors = []TestVector{
 		{
 			version:  0,
-			time:     bitcoinGenesisDate,
+			time:     BitcoinGenesisDate,
 			entropy:  testEntropy,
 			salt:     testSalt,
 			password: []byte{},
