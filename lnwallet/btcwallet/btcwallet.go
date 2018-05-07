@@ -406,6 +406,11 @@ func (b *BtcWallet) PublishTransaction(tx *wire.MsgTx) error {
 				// consider this an error.
 				return nil
 			}
+			if strings.Contains(err.Error(), "output already spent") {
+				// Transaction has inputs that have already been
+				// spent by another transaction.
+				return nil
+			}
 			if strings.Contains(err.Error(), "txn-mempool-conflict") {
 				// Output was spent by other transaction
 				// already in the mempool.
