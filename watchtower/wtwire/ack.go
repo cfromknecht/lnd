@@ -1,8 +1,6 @@
 package wtwire
 
-import (
-	"io"
-)
+import "io"
 
 // Ack is sent from tower to client as reponse to WatchInfo and
 // StateUpdate messages.

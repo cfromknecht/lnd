@@ -92,7 +92,11 @@ func wtMain() error {
 		return err
 	}
 
-	watcher := blockinspector.New(blocks.NewBlocks, txDB, punisher)
+	watcher := blockinspector.New(&blockinspector.Config{
+		NewBlocks: blocks.NewBlocks,
+		DB:        txDB,
+		Punisher:  punisher,
+	})
 	if err := watcher.Start(); err != nil {
 		return err
 	}

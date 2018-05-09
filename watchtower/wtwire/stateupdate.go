@@ -1,8 +1,6 @@
 package wtwire
 
-import (
-	"io"
-)
+import "io"
 
 //const EncryptedBlobSize = 512
 
@@ -24,7 +22,7 @@ var _ Message = (*StateUpdate)(nil)
 func (m *StateUpdate) Decode(r io.Reader, pver uint32) error {
 	return readElements(r,
 		&m.SeqNum,
-		&m.LastAck,
+		&m.LastApplied,
 		&m.TxIDPrefix,
 		&m.EncryptedBlob,
 	)
@@ -37,7 +35,7 @@ func (m *StateUpdate) Decode(r io.Reader, pver uint32) error {
 func (m *StateUpdate) Encode(w io.Writer, pver uint32) error {
 	return writeElements(w,
 		m.SeqNum,
-		m.LastAck,
+		m.LastApplied,
 		m.TxIDPrefix,
 		m.EncryptedBlob,
 	)

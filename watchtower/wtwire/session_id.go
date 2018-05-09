@@ -1,12 +1,16 @@
 package wtwire
 
-import "encoding/hex"
+import (
+	"encoding/hex"
+
+	"github.com/roasbeef/btcd/btcec"
+)
 
 type SessionID [33]byte
 
 func NewSessionIDFromPubKey(pubKey *btcec.PublicKey) SessionID {
 	var sid SessionID
-	copy(sid[:], pk.SerializeCompressed())
+	copy(sid[:], pubKey.SerializeCompressed())
 	return sid
 }
 

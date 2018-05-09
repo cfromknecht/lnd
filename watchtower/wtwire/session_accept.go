@@ -1,5 +1,7 @@
 package wtwire
 
+import "io"
+
 type SessionAccept struct {
 	RewardPkScript []byte
 	// TODO(conner): respond with payment request

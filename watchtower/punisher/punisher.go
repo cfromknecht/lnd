@@ -47,7 +47,7 @@ func New(chainService *neutrino.ChainService) (*punisher, error) {
 	return p, nil
 }
 
-func (p *punisher) PunishBreach(info *PunishInfo) error {
+func (p *punisher) Punish(info *PunishInfo) error {
 	penaltyTx, remotePkScript, err := AssemblePenaltyTx(info.BreachedCommitmentTx,
 		info.RevocationBasePoint, info.LocalDelayedBasePoint,
 		info.CsvDelay, info.FeeRate, info.TowerReward,
