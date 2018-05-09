@@ -5,9 +5,9 @@ import (
 )
 
 // Ack is sent from tower to client as reponse to WatchInfo and
-// StateUpdate messages..
+// StateUpdate messages.
 type Ack struct {
-	SessionID uint64
+	LastApplied uint16
 }
 
 // A compile time check to ensure Ack implements the wtwire.Message
@@ -19,7 +19,9 @@ var _ Message = (*Ack)(nil)
 //
 // This is part of the wtwire.Message interface.
 func (t *Ack) Decode(r io.Reader, pver uint32) error {
-	return readElements(r, &t.SessionID)
+	return readElements(r,
+		&t.LastApplied,
+	)
 }
 
 // Encode serializes the target Ack into the passed io.Writer
@@ -27,7 +29,9 @@ func (t *Ack) Decode(r io.Reader, pver uint32) error {
 //
 // This is part of the wtwire.Message interface.
 func (t *Ack) Encode(w io.Writer, pver uint32) error {
-	return writeElements(w, t.SessionID)
+	return writeElements(w,
+		t.LastApplied,
+	)
 }
 
 // MsgType returns the integer uniquely identifying this message type on the
@@ -43,5 +47,5 @@ func (t *Ack) MsgType() MessageType {
 //
 // This is part of the wtwire.Message interface.
 func (t *Ack) MaxPayloadLength(uint32) uint32 {
-	return 8
+	return 2
 }

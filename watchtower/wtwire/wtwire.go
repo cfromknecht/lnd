@@ -56,7 +56,17 @@ func writeElement(w io.Writer, element interface{}) error {
 		}
 
 	case []byte:
-		if _, err := wire.WriteVarBytes(w, 0, e); err != nil {
+		if err := wire.WriteVarBytes(w, 0, e); err != nil {
+			return err
+		}
+
+	case BreachHint:
+		if _, err := w.Write(e[:]); err != nil {
+			return err
+		}
+
+	case SessionID:
+		if _, err := w.Write(e[:]); err != nil {
 			return err
 		}
 
@@ -137,6 +147,16 @@ func readElement(r io.Reader, element interface{}) error {
 			return err
 		}
 		*e = bytes
+
+	case *BreachHint:
+		if _, err := io.ReadFull(r, e[:]); err != nil {
+			return err
+		}
+
+	case *SessionID:
+		if _, err := io.ReadFull(r, e[:]); err != nil {
+			return err
+		}
 
 	case **btcec.PublicKey:
 		var b [btcec.PubKeyBytesLenCompressed]byte

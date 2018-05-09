@@ -1,4 +1,4 @@
-package main
+package watchtower
 
 import (
 	"encoding/hex"
@@ -9,13 +9,13 @@ import (
 	"time"
 
 	flags "github.com/btcsuite/go-flags"
-	"github.com/lightninglabs/sauron/blockinspector"
-	"github.com/lightninglabs/sauron/config"
-	"github.com/lightninglabs/sauron/neutrinoblocks"
-	"github.com/lightninglabs/sauron/punisher"
-	"github.com/lightninglabs/sauron/server"
-	"github.com/lightninglabs/sauron/transactiondb"
 	"github.com/lightninglabs/neutrino"
+	"github.com/lightningnetwork/lnd/watchtower/blockinspector"
+	"github.com/lightningnetwork/lnd/watchtower/config"
+	"github.com/lightningnetwork/lnd/watchtower/neutrinoblocks"
+	"github.com/lightningnetwork/lnd/watchtower/punisher"
+	"github.com/lightningnetwork/lnd/watchtower/server"
+	"github.com/lightningnetwork/lnd/watchtower/transactiondb"
 	"github.com/roasbeef/btcutil"
 	"github.com/roasbeef/btcwallet/walletdb"
 )

@@ -9,17 +9,15 @@ import (
 	"io"
 
 	"github.com/lightningnetwork/lnd/lnwire"
-	"github.com/roasbeef/btcd/btcec"
-	"github.com/roasbeef/btcd/chaincfg/chainhash"
 )
 
-//const EncryptedBlobSize = 512
+const EncryptedBlobSize = 512
 
 var byteOrder = binary.BigEndian
 
 type SweepDetails struct {
 	Revocation [32]byte
-	SweepSig   *btcec.Signature
+	SweepSig   lnwire.Sig
 }
 
 func (s *SweepDetails) Serialize() ([]byte, error) {
@@ -29,12 +27,7 @@ func (s *SweepDetails) Serialize() ([]byte, error) {
 		return nil, err
 	}
 
-	var sig [64]byte
-	if err := lnwire.SerializeSigToWire(&sig, s.SweepSig); err != nil {
-		return nil, err
-	}
-
-	_, err = b.Write(sig[:])
+	_, err = b.Write(s.SweepSig[:])
 	if err != nil {
 		return nil, err
 	}
@@ -49,12 +42,7 @@ func (s *SweepDetails) Deserialize(b []byte) error {
 		return err
 	}
 
-	var sig [64]byte
-	if _, err := io.ReadFull(r, sig[:]); err != nil {
-		return err
-	}
-
-	if err := lnwire.DeserializeSigFromWire(&s.SweepSig, sig); err != nil {
+	if _, err := io.ReadFull(r, s.SweepSig[:]); err != nil {
 		return err
 	}
 
@@ -62,7 +50,7 @@ func (s *SweepDetails) Deserialize(b []byte) error {
 
 }
 
-func EncryptSweepDetails(s *SweepDetails, key *chainhash.Hash) ([]byte, error) {
+func EncryptSweepDetails(s *SweepDetails, key BreachKey) ([]byte, error) {
 
 	block, err := aes.NewCipher(key[:])
 	if err != nil {
@@ -92,7 +80,7 @@ func EncryptSweepDetails(s *SweepDetails, key *chainhash.Hash) ([]byte, error) {
 	return ciphertext, nil
 }
 
-func DecryptSweepDetails(ciphertext []byte, key *chainhash.Hash) (*SweepDetails, error) {
+func DecryptSweepDetails(ciphertext []byte, key BreachKey) (*SweepDetails, error) {
 
 	block, err := aes.NewCipher(key[:])
 	if err != nil {

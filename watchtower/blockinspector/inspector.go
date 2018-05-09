@@ -5,9 +5,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/lightninglabs/sauron/punisher"
-	"github.com/lightninglabs/sauron/transactiondb"
-	"github.com/lightninglabs/sauron/wtwire"
+	"github.com/lightningnetwork/lnd/watchtower/punisher"
+	"github.com/lightningnetwork/lnd/watchtower/transactiondb"
+	"github.com/lightningnetwork/lnd/watchtower/wtwire"
 	"github.com/roasbeef/btcd/chaincfg/chainhash"
 	"github.com/roasbeef/btcd/wire"
 	_ "github.com/roasbeef/btcwallet/walletdb/bdb"
@@ -28,21 +28,27 @@ type BlockInspector struct {
 	started  int32 // atomic
 	shutdown int32 // atomic
 
-	db       *transactiondb.DB
-	blocks   <-chan *wire.MsgBlock
-	punisher *punisher.Punisher
+	cfg *Config
 
 	wg   sync.WaitGroup
 	quit chan struct{}
 }
 
-func New(newBlocks <-chan *wire.MsgBlock,
-	db *transactiondb.DB, p *punisher.Punisher) *BlockInspector {
+type BlobDecrypter interface {
+	DecryptBlob([]byte, wtwire.BreachKey) ([]byte, error)
+}
+
+type Config struct {
+	NewBlocks <-chan *wire.MsgBlock
+	DB        *transactiondb.DB
+	Punisher  punisher.Punisher
+	Decrypter BlobDecrypter
+}
+
+func New(cfg *Config) *BlockInspector {
 	return &BlockInspector{
-		db:       db,
-		blocks:   newBlocks,
-		punisher: p,
-		quit:     make(chan struct{}),
+		cfg:  cfg,
+		quit: make(chan struct{}),
 	}
 }
 
@@ -70,13 +76,15 @@ func (c *BlockInspector) Stop() error {
 
 func (c *BlockInspector) watchBlocks() {
 	defer c.wg.Done()
+
 	for {
 		select {
-		case block := <-c.blocks:
+		case block := <-c.cfg.NewBlocks:
 			fmt.Println("new block;", block)
 
 			c.wg.Add(1)
 			go c.processNewBlock(block)
+
 		case <-c.quit:
 			return
 		}
@@ -87,37 +95,37 @@ func (c *BlockInspector) processNewBlock(block *wire.MsgBlock) {
 	defer c.wg.Done()
 
 	// Check each tx in the block against the prefixes in the db.
-	var txPrefixes [][16]byte
+	var txHints []wtwire.BreachHint
 
 	// Map from string(prefix) to TX.
-	txs := make(map[string]*wire.MsgTx)
+	txs := make(map[wtwire.BreachHint]*wire.MsgTx)
 	for _, tx := range block.Transactions {
 		fmt.Println("tx:", tx.TxHash())
 		hash := tx.TxHash()
-		var prefix [16]byte
-		copy(prefix[:], hash[0:16])
-		txPrefixes = append(txPrefixes, prefix)
-		txs[string(prefix[:])] = tx
+		hint := wtwire.NewBreachHintFromHash(&hash)
+		txHints = append(txHints, hint)
+		txs[hint] = tx
 	}
 
-	matches, err := c.db.FindMatches(txPrefixes)
+	matches, err := c.cfg.DB.FindMatches(txHints)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	for _, m := range matches {
-		tx, ok := txs[string(m.TxIDPrefix[:])]
+		tx, ok := txs[m.TxIDPrefix]
 		if !ok {
 			fmt.Println("match not in tx id map!")
 			return
 		}
+
 		fmt.Println("match", m)
 		hit := &match{
-			SessionID:     m.SessionID,
 			DecryptionKey: tx.TxHash(),
 			CommitTx:      tx,
 			EncryptedBlob: m.EncryptedBlob[:],
 		}
+
 		c.wg.Add(1)
 		go c.handleMatch(hit)
 	}
@@ -126,32 +134,35 @@ func (c *BlockInspector) processNewBlock(block *wire.MsgBlock) {
 func (c *BlockInspector) handleMatch(m *match) {
 	defer c.wg.Done()
 
-	sweep, err := wtwire.DecryptSweepDetails(m.EncryptedBlob,
-		&m.DecryptionKey)
+	breachKey := wtwire.NewBreachKeyFromHash(&m.DecryptionKey)
+
+	sweep, err := wtwire.DecryptSweepDetails(
+		m.EncryptedBlob, breachKey,
+	)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("unable to decrypt blob: %v\n", err)
 		return
 	}
 
-	info, err := c.db.GetSessionInfo(m.SessionID)
+	info, err := c.cfg.DB.GetSessionInfo(m.SessionID)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("unable to get session info: %v\n", err)
 		return
 	}
 
 	p := &punisher.PunishInfo{
-		BreachedCommitmentTx:  m.CommitTx,
-		RevocationBasePoint:   info.RevocationBasePoint,
-		LocalDelayedBasePoint: info.LocalDelayedBasePoint,
-		CsvDelay:              info.CsvDelay,
-		FeeRate:               info.FeeRate,
-		OutputScript:          info.OutputScript,
-		TowerReward:           info.OutputReward,
-		TowerOutputScript:     info.TowerOutputScript,
-		Revocation:            sweep.Revocation,
-		PenaltySignature:      sweep.SweepSig,
+		BreachedCommitmentTx: m.CommitTx,
+		//RevocationBasePoint:   info.RevocationBasePoint,
+		//LocalDelayedBasePoint: info.LocalDelayedBasePoint,
+		CsvDelay:          info.CsvDelay,
+		FeeRate:           info.FeeRate,
+		OutputScript:      info.OutputScript,
+		TowerReward:       info.OutputReward,
+		TowerOutputScript: info.TowerOutputScript,
+		Revocation:        sweep.Revocation,
+		PenaltySignature:  sweep.SweepSig,
 	}
-	if err := c.punisher.PunishBreach(p); err != nil {
+	if err := c.cfg.Punisher.Punish(p); err != nil {
 		fmt.Println(err)
 		return
 	}

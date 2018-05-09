@@ -5,8 +5,9 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/halseth/lnd/lnwallet"
 	"github.com/lightninglabs/neutrino"
+	"github.com/lightningnetwork/lnd/lnwallet"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/roasbeef/btcd/blockchain"
 	"github.com/roasbeef/btcd/btcec"
 	"github.com/roasbeef/btcd/txscript"
@@ -24,22 +25,29 @@ type PunishInfo struct {
 	TowerReward           uint64
 	TowerOutputScript     []byte
 	Revocation            [32]byte
-	PenaltySignature      *btcec.Signature
+	PenaltySignature      lnwire.Sig
 }
 
-type Punisher struct {
+type Config struct {
+}
+
+type Punisher interface {
+	Punish(*PunishInfo) error
+}
+
+type punisher struct {
 	chainService *neutrino.ChainService
 }
 
-func New(chainService *neutrino.ChainService) (*Punisher, error) {
+func New(chainService *neutrino.ChainService) (*punisher, error) {
 
-	p := &Punisher{
+	p := &punisher{
 		chainService: chainService,
 	}
 	return p, nil
 }
 
-func (p *Punisher) PunishBreach(info *PunishInfo) error {
+func (p *punisher) PunishBreach(info *PunishInfo) error {
 	penaltyTx, remotePkScript, err := AssemblePenaltyTx(info.BreachedCommitmentTx,
 		info.RevocationBasePoint, info.LocalDelayedBasePoint,
 		info.CsvDelay, info.FeeRate, info.TowerReward,
@@ -52,7 +60,7 @@ func (p *Punisher) PunishBreach(info *PunishInfo) error {
 	fmt.Println(penaltyTx)
 	fmt.Println(remotePkScript)
 
-	sig := info.PenaltySignature.Serialize()
+	sig := info.PenaltySignature[:]
 	witnessStack := wire.TxWitness(make([][]byte, 3))
 	witnessStack[0] = append(sig, byte(txscript.SigHashSingle))
 	witnessStack[1] = []byte{1}
@@ -145,9 +153,14 @@ func AssemblePenaltyTx(commitTx *wire.MsgTx, localRevocationBasePoint,
 	})
 	btx := btcutil.NewTx(penaltyTx)
 	txWeight := blockchain.GetTransactionWeight(btx)
-	estimator := &lnwallet.StaticFeeEstimator{FeeRate: feeRate}
-	feePerKw := estimator.EstimateFeePerWeight(1) * 1000
-	fee := txWeight * int64(feePerKw) / 1000
+	estimator := &lnwallet.StaticFeeEstimator{
+		FeeRate: lnwallet.SatPerVByte(feeRate),
+	}
+	feePerVSize, err := estimator.EstimateFeePerVSize(1)
+	if err != nil {
+		return nil, nil, err
+	}
+	fee := txWeight * int64(1000*feePerVSize) / 1000
 	penaltyTx.TxOut[1].Value = int64(remoteAmt) - int64(towerOutputValue) - fee
 	fmt.Println("remote:", uint64(remoteAmt))
 	fmt.Println("tower:", towerReward)

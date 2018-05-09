@@ -8,13 +8,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lightninglabs/sauron/config"
-	"github.com/lightninglabs/sauron/justicekit"
-	"github.com/lightninglabs/sauron/wtwire"
 	"github.com/lightningnetwork/lnd/brontide"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/watchtower/config"
+	"github.com/lightningnetwork/lnd/watchtower/wtwire"
 	"github.com/roasbeef/btcd/btcec"
 	"github.com/roasbeef/btcd/chaincfg/chainhash"
 	"github.com/roasbeef/btcd/txscript"
@@ -442,12 +441,12 @@ func (c *Client) sendStateUpdate(s *watchSession, rev *RevokedCommitment,
 		return err
 	}
 
-	sweep := &justicekit.SweepDetails{
+	sweep := &lnwire.SweepDetails{
 		Revocation: rev.Revocation,
 		SweepSig:   sign,
 	}
 
-	enc, err := justicekit.EncryptSweepDetails(sweep, txid)
+	enc, err := lnwire.EncryptSweepDetails(sweep, txid)
 	if err != nil {
 		return err
 	}

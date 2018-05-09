@@ -9,10 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lightninglabs/sauron/config"
-	"github.com/lightninglabs/sauron/transactiondb"
-	"github.com/lightninglabs/sauron/wtwire"
 	"github.com/lightningnetwork/lnd/brontide"
+	"github.com/lightningnetwork/lnd/watchtower/config"
+	"github.com/lightningnetwork/lnd/watchtower/transactiondb"
+	"github.com/lightningnetwork/lnd/watchtower/wtwire"
 	"github.com/roasbeef/btcd/btcec"
 	"github.com/roasbeef/btcd/connmgr"
 	"github.com/roasbeef/btcutil"

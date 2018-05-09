@@ -1,4 +1,4 @@
-package main
+package watchtower
 
 // Heavily inspired by https://github.com/btcsuite/btcd/blob/master/signal.go
 

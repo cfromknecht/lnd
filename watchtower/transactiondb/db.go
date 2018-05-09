@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/boltdb/bolt"
-	"github.com/lightninglabs/sauron/wtwire"
+	"github.com/coreos/bbolt"
+	"github.com/lightningnetwork/lnd/watchtower/wtwire"
 )
 
 const (
@@ -78,8 +78,8 @@ func (d *DB) InsertSessionInfo(info *wtwire.SessionInfo) error {
 	var key [8]byte
 	byteOrder.PutUint64(key[:], info.SessionID)
 
-	return d.Batch(func(tx *bolt.Tx) error {
-		sessions, err := tx.Bucket(sessionBucket)
+	return d.DB.Batch(func(tx *bolt.Tx) error {
+		sessions := tx.Bucket(sessionBucket)
 		if sessions == nil {
 			return ErrCorruptTxnDB
 		}
@@ -104,14 +104,14 @@ func (d *DB) GetSessionInfo(sessionID uint64) (*wtwire.SessionInfo, error) {
 			return ErrCorruptTxnDB
 		}
 
-		info := bucket.Get(key[:])
-		if i == nil {
+		infoBytes := sessions.Get(key[:])
+		if infoBytes == nil {
 			return ErrSessionNotFound
 		}
 
 		info = &wtwire.SessionInfo{}
 
-		return info.Decode(bytes.NewReader(info), 0)
+		return info.Decode(bytes.NewReader(infoBytes), 0)
 	})
 	if err != nil {
 		return nil, err
@@ -121,24 +121,15 @@ func (d *DB) GetSessionInfo(sessionID uint64) (*wtwire.SessionInfo, error) {
 }
 
 func (d *DB) InsertTransaction(blob *wtwire.StateUpdate) error {
-	var id [8]byte
-	byteOrder.PutUint64(id[:], blob.SessionID)
-
 	return d.Batch(func(tx *bolt.Tx) error {
-		blobs := tx.CreateBucketIfNotExists(blobBucket)
+		blobs := tx.Bucket(blobBucket)
 		if blobs == nil {
 			return ErrCorruptTxnDB
 		}
 
-		var b bytes.Buffer
-		if _, err := b.Write(id[:]); err != nil {
-			return err
-		}
-		if _, err := b.Write(blob.EncryptedBlob[:]); err != nil {
-			return err
-		}
+		fmt.Printf("storing blob: %s\n", string(blob.EncryptedBlob))
 
-		return blobs.Put(blob.TxIDPrefix[:], b.Bytes())
+		return blobs.Put(blob.TxIDPrefix[:], blob.EncryptedBlob)
 	})
 }
 
@@ -156,33 +147,36 @@ func (d *DB) ListEntries() error {
 	})
 }
 
-func (d *DB) FindMatches(prefixes [][16]byte) ([]*wtwire.StateUpdate, error) {
+func (d *DB) FindMatches(
+	hints []wtwire.BreachHint) ([]*wtwire.StateUpdate, error) {
+
 	var matches []*wtwire.StateUpdate
 	err := d.View(func(tx *bolt.Tx) error {
 		blobs := tx.Bucket(blobBucket)
 		if blobs == nil {
-			return ErrCorruptTxnDB
+			return nil
 		}
 
-		for _, p := range prefixes {
-			v := blobs.Get(p[:])
-			if v != nil {
-				sessionID := byteOrder.Uint64(v[:8])
-				var blob [112]byte
-				copy(blob[:], v[8:])
-				matches = append(matches, &wtwire.StateUpdate{
-					SessionID:     sessionID,
-					TxIDPrefix:    p,
-					EncryptedBlob: blob,
-				})
+		for _, hint := range hints {
+			blobBytes := blobs.Get(hint[:])
+			if blobBytes == nil {
+				continue
 			}
+
+			update := &wtwire.StateUpdate{
+				TxIDPrefix:    hint,
+				EncryptedBlob: make([]byte, len(blobBytes)),
+			}
+			copy(update.EncryptedBlob, blobBytes)
+
+			matches = append(matches, update)
 		}
+
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-
 	return matches, nil
 }
 
@@ -192,11 +186,11 @@ func (d *DB) Wipe() error {
 		if err != nil && err != bolt.ErrBucketNotFound {
 			return err
 		}
-		err := tx.DeleteBucket(blobBucket)
+		err = tx.DeleteBucket(blobBucket)
 		if err != nil && err != bolt.ErrBucketNotFound {
 			return err
 		}
-		err := tx.DeleteBucket(sessionBucket)
+		err = tx.DeleteBucket(sessionBucket)
 		if err != nil && err != bolt.ErrBucketNotFound {
 			return err
 		}

@@ -13,6 +13,7 @@ import (
 	flags "github.com/btcsuite/go-flags"
 	"github.com/lightningnetwork/lnd/brontide"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/torsvc"
 	"github.com/roasbeef/btcd/btcec"
 	"github.com/roasbeef/btcd/chaincfg"
 	"github.com/roasbeef/btcutil"
@@ -90,6 +91,8 @@ type Config struct {
 	RewardAddress string `long:"address" description:"Address to send any funds awarded from detecting breaches."`
 
 	NeutrinoMode *NeutrinoConfig `group:"neutrino" namespace:"neutrino"`
+
+	net torsvc.Net
 }
 
 // loadConfig initializes and parses the config using a config file and command
@@ -225,6 +228,8 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 
+	cfg.net = &torsvc.RegularNet{}
+
 	// Append the network type to the data directory so it is "namespaced"
 	// per network. In addition to the block database, there are other
 	// pieces of data that are saved to disk such as address manager state.
@@ -270,7 +275,8 @@ func cleanAndExpandPath(path string) string {
 // function by returning a closure which includes the server's identity key.
 func NoiseDial(idPriv *btcec.PrivateKey) func(net.Addr) (net.Conn, error) {
 	return func(a net.Addr) (net.Conn, error) {
+		var dialer torsvc.RegularNet
 		lnAddr := a.(*lnwire.NetAddress)
-		return brontide.Dial(idPriv, lnAddr)
+		return brontide.Dial(idPriv, lnAddr, dialer.Dial)
 	}
 }

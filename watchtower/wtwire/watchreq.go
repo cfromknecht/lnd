@@ -2,6 +2,8 @@ package wtwire
 
 import (
 	"io"
+
+	"github.com/lightningnetwork/lnd/lnwallet"
 )
 
 // WatchRequest is sent from a client to tower when he wants to open
@@ -10,6 +12,9 @@ type WatchRequest struct {
 	// NOTE: assign random id, rename to SessionID
 	SessionID    uint64
 	OutputReward uint64
+	RewardRate   uint64
+	SweepFeeRate lnwallet.SatPerVByte
+	NumUpdates   uint16
 }
 
 // A compile time check to ensure WatchRequest implements the wtwire.Message
@@ -21,7 +26,12 @@ var _ Message = (*WatchRequest)(nil)
 //
 // This is part of the wtwire.Message interface.
 func (t *WatchRequest) Decode(r io.Reader, pver uint32) error {
-	return readElements(r, &t.SessionID, &t.OutputReward)
+	return readElements(r,
+		&t.SessionID,
+		&t.OutputReward,
+		&t.RewardRate,
+		&t.SweepFeeRate,
+	)
 }
 
 // Encode serializes the target WatchRequest into the passed io.Writer
@@ -29,7 +39,12 @@ func (t *WatchRequest) Decode(r io.Reader, pver uint32) error {
 //
 // This is part of the wtwire.Message interface.
 func (t *WatchRequest) Encode(w io.Writer, pver uint32) error {
-	return writeElements(w, t.SessionID, t.OutputReward)
+	return writeElements(w,
+		t.SessionID,
+		t.OutputReward,
+		t.RewardRate,
+		t.SweepFeeRate,
+	)
 }
 
 // MsgType returns the integer uniquely identifying this message type on the

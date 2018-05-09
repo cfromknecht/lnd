@@ -7,7 +7,9 @@ import (
 //const EncryptedBlobSize = 512
 
 type StateUpdate struct {
-	TxIDPrefix    [16]byte
+	SeqNum        uint16
+	LastApplied   uint16
+	TxIDPrefix    BreachHint
 	EncryptedBlob []byte
 }
 
@@ -19,10 +21,12 @@ var _ Message = (*StateUpdate)(nil)
 // io.Reader observing the specified protocol version.
 //
 // This is part of the wtwire.Message interface.
-func (t *StateUpdate) Decode(r io.Reader, pver uint32) error {
+func (m *StateUpdate) Decode(r io.Reader, pver uint32) error {
 	return readElements(r,
-		&t.TxIDPrefix,
-		&t.EncryptedBlob,
+		&m.SeqNum,
+		&m.LastAck,
+		&m.TxIDPrefix,
+		&m.EncryptedBlob,
 	)
 }
 
@@ -30,10 +34,12 @@ func (t *StateUpdate) Decode(r io.Reader, pver uint32) error {
 // observing the protocol version specified.
 //
 // This is part of the wtwire.Message interface.
-func (t *StateUpdate) Encode(w io.Writer, pver uint32) error {
+func (m *StateUpdate) Encode(w io.Writer, pver uint32) error {
 	return writeElements(w,
-		t.TxIDPrefix,
-		t.EncryptedBlob,
+		m.SeqNum,
+		m.LastAck,
+		m.TxIDPrefix,
+		m.EncryptedBlob,
 	)
 }
 
@@ -41,7 +47,7 @@ func (t *StateUpdate) Encode(w io.Writer, pver uint32) error {
 // wire.
 //
 // This is part of the wtwire.Message interface.
-func (t *StateUpdate) MsgType() MessageType {
+func (m *StateUpdate) MsgType() MessageType {
 	return MsgStateUpdate
 }
 
@@ -49,7 +55,7 @@ func (t *StateUpdate) MsgType() MessageType {
 // complete message observing the specified protocol version.
 
 // This is part of the wtwire.Message interface.
-func (t *StateUpdate) MaxPayloadLength(uint32) uint32 {
+func (m *StateUpdate) MaxPayloadLength(uint32) uint32 {
 	// TODO
 	return 66000
 }

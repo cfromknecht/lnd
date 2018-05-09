@@ -24,8 +24,11 @@ const (
 	MsgStateUpdate   MessageType = 16
 	MsgWatchRequest  MessageType = 17
 	MsgWatchResponse MessageType = 18
-	MsgSessionInfo   MessageType = 20
 	MsgAck           MessageType = 19
+	MsgSessionInfo   MessageType = 20
+
+	MsgSessionInit   MessageType = 30
+	MsgSessionAccept MessageType = 31
 )
 
 // Serializable is an interface which defines a lightning wire serializable
