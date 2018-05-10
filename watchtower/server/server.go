@@ -11,7 +11,7 @@ import (
 
 	"github.com/lightningnetwork/lnd/brontide"
 	"github.com/lightningnetwork/lnd/watchtower/config"
-	"github.com/lightningnetwork/lnd/watchtower/transactiondb"
+	"github.com/lightningnetwork/lnd/watchtower/wtdb"
 	"github.com/lightningnetwork/lnd/watchtower/wtwire"
 	"github.com/roasbeef/btcd/btcec"
 	"github.com/roasbeef/btcd/connmgr"
@@ -26,13 +26,13 @@ type Server struct {
 	connMgr       *connmgr.ConnManager
 	rewardAddress btcutil.Address
 
-	db *transactiondb.DB
+	db *wtdb.DB
 
 	wg sync.WaitGroup
 }
 
 func New(listenAddrs []string, privKey *btcec.PrivateKey,
-	db *transactiondb.DB, address btcutil.Address) (*Server, error) {
+	db *wtdb.DB, address btcutil.Address) (*Server, error) {
 
 	var err error
 	listeners := make([]net.Listener, len(listenAddrs))

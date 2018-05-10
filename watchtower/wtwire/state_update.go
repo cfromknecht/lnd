@@ -7,7 +7,7 @@ import "io"
 type StateUpdate struct {
 	SeqNum        uint16
 	LastApplied   uint16
-	TxIDPrefix    BreachHint
+	Hint          BreachHint
 	EncryptedBlob []byte
 }
 
@@ -23,7 +23,7 @@ func (m *StateUpdate) Decode(r io.Reader, pver uint32) error {
 	return readElements(r,
 		&m.SeqNum,
 		&m.LastApplied,
-		&m.TxIDPrefix,
+		&m.Hint,
 		&m.EncryptedBlob,
 	)
 }
@@ -36,7 +36,7 @@ func (m *StateUpdate) Encode(w io.Writer, pver uint32) error {
 	return writeElements(w,
 		m.SeqNum,
 		m.LastApplied,
-		m.TxIDPrefix,
+		m.Hint,
 		m.EncryptedBlob,
 	)
 }

@@ -1,4 +1,4 @@
-package wtwire
+package wtdb
 
 import (
 	"encoding/hex"
@@ -6,7 +6,9 @@ import (
 	"github.com/roasbeef/btcd/btcec"
 )
 
-type SessionID [33]byte
+const SessionIDSize = 33
+
+type SessionID [SessionIDSize]byte
 
 func NewSessionIDFromPubKey(pubKey *btcec.PublicKey) SessionID {
 	var sid SessionID

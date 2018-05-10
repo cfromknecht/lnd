@@ -1,4 +1,4 @@
-package transactiondb
+package wtdb
 
 import (
 	"bytes"
@@ -18,9 +18,8 @@ const (
 )
 
 var (
-	hintBucket    = []byte("hint-to-sessions")
-	blobBucket    = []byte("session-hint-to-blob")
-	sessionBucket = []byte("session-to-info")
+	hintBucket    = []byte("hints")
+	sessionBucket = []byte("sessions")
 
 	// Big endian is the preferred byte order, due to cursor scans over
 	// integer keys iterating in order.
@@ -29,6 +28,8 @@ var (
 	ErrCorruptTxnDB = errors.New("transaction db is corrupted")
 
 	ErrSessionNotFound = errors.New("session not found in db")
+
+	ErrSessionAlreadyExists = errors.New("session already exists")
 )
 
 type DB struct {
@@ -74,44 +75,18 @@ func (d *DB) initBuckets() error {
 	})
 }
 
-func (d *DB) InsertSessionInfo(info *wtwire.SessionInfo) error {
-	var key [8]byte
-	byteOrder.PutUint64(key[:], info.SessionID)
-
+func (d *DB) InsertSessionInfo(info *SessionInfo) error {
 	return d.DB.Batch(func(tx *bolt.Tx) error {
-		sessions := tx.Bucket(sessionBucket)
-		if sessions == nil {
-			return ErrCorruptTxnDB
-		}
-
-		var b bytes.Buffer
-		if err := info.Encode(&b, 0); err != nil {
-			return err
-		}
-
-		return sessions.Put(key[:], b.Bytes())
+		return putSessionInfo(tx, info, true)
 	})
 }
 
-func (d *DB) GetSessionInfo(sessionID uint64) (*wtwire.SessionInfo, error) {
-	var key [8]byte
-	byteOrder.PutUint64(key[:], sessionID)
-
-	var info *wtwire.SessionInfo
+func (d *DB) GetSessionInfo(sessionID *SessionID) (*SessionInfo, error) {
+	var info *SessionInfo
 	err := d.View(func(tx *bolt.Tx) error {
-		sessions := tx.Bucket(sessionBucket)
-		if sessions == nil {
-			return ErrCorruptTxnDB
-		}
-
-		infoBytes := sessions.Get(key[:])
-		if infoBytes == nil {
-			return ErrSessionNotFound
-		}
-
-		info = &wtwire.SessionInfo{}
-
-		return info.Decode(bytes.NewReader(infoBytes), 0)
+		var err error
+		info, err = getSessionInfo(tx, sessionID)
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -120,16 +95,84 @@ func (d *DB) GetSessionInfo(sessionID uint64) (*wtwire.SessionInfo, error) {
 	return info, nil
 }
 
-func (d *DB) InsertTransaction(blob *wtwire.StateUpdate) error {
+func getSessionInfo(tx *bolt.Tx, sessionID *SessionID) (*SessionInfo, error) {
+	sessions := tx.Bucket(sessionBucket)
+	if sessions == nil {
+		return nil, ErrCorruptTxnDB
+	}
+
+	infoBytes := sessions.Get(sessionID[:])
+	if infoBytes == nil {
+		return nil, ErrSessionNotFound
+	}
+
+	info := &SessionInfo{
+		ID: *sessionID,
+	}
+
+	err := info.Decode(bytes.NewReader(infoBytes))
+	if err != nil {
+		return nil, err
+	}
+
+	return info, nil
+}
+
+func putSessionInfo(tx *bolt.Tx, info *SessionInfo, isInit bool) error {
+	sessions := tx.Bucket(sessionBucket)
+	if sessions == nil {
+		return ErrCorruptTxnDB
+	}
+
+	if isInit {
+		infoBytes := sessions.Get(info.ID[:])
+		if infoBytes != nil {
+			return ErrSessionAlreadyExists
+		}
+	}
+
+	var b bytes.Buffer
+	if err := info.Encode(&b); err != nil {
+		return err
+	}
+
+	return sessions.Put(info.ID[:], b.Bytes())
+}
+
+func (d *DB) InsertStateUpdate(update *SessionStateUpdate) error {
 	return d.Batch(func(tx *bolt.Tx) error {
-		blobs := tx.Bucket(blobBucket)
-		if blobs == nil {
+		info, err := getSessionInfo(tx, &update.ID)
+		if err != nil {
+			return err
+		}
+
+		err = info.AcceptUpdateSequence(
+			update.SeqNum, update.LastApplied,
+		)
+		if err != nil {
+			return err
+		}
+
+		err = putSessionInfo(tx, info, false)
+		if err != nil {
+			return err
+		}
+
+		hints := tx.Bucket(hintBucket)
+		if hints == nil {
 			return ErrCorruptTxnDB
 		}
 
-		fmt.Printf("storing blob: %s\n", string(blob.EncryptedBlob))
+		hintSessions, err := hints.CreateBucketIfNotExists(
+			update.Hint[:],
+		)
+		if err != nil {
+			return err
+		}
 
-		return blobs.Put(blob.TxIDPrefix[:], blob.EncryptedBlob)
+		fmt.Printf("storing blob: %s\n", string(update.EncryptedBlob))
+
+		return hintSessions.Put(update.ID[:], update.EncryptedBlob)
 	})
 }
 
@@ -147,29 +190,39 @@ func (d *DB) ListEntries() error {
 	})
 }
 
-func (d *DB) FindMatches(
-	hints []wtwire.BreachHint) ([]*wtwire.StateUpdate, error) {
+type Match struct {
+	ID            SessionID
+	Hint          BreachHint
+	EncryptedBlob []byte
+}
 
-	var matches []*wtwire.StateUpdate
+func (d *DB) FindMatches(blockHints []BreachHint) ([]*Match, error) {
+	var matches []*SessionStateUpdate
 	err := d.View(func(tx *bolt.Tx) error {
-		blobs := tx.Bucket(blobBucket)
-		if blobs == nil {
+		hints := tx.Bucket(hintBucket)
+		if hints == nil {
 			return nil
 		}
 
-		for _, hint := range hints {
-			blobBytes := blobs.Get(hint[:])
-			if blobBytes == nil {
+		for _, hint := range blockHints {
+			hintSessions := hints.Bucket(hint[:])
+			if hintSessions == nil {
 				continue
 			}
 
-			update := &wtwire.StateUpdate{
-				TxIDPrefix:    hint,
-				EncryptedBlob: make([]byte, len(blobBytes)),
-			}
-			copy(update.EncryptedBlob, blobBytes)
+			err := hintSessions.ForEach(func(id, blob []byte) error {
+				match := &Match{
+					Hint:          hint,
+					EncryptedBlob: make([]byte, len(blob)),
+				}
+				copy(match.ID[:], id)
+				copy(match.EncryptedBlob, blob)
 
-			matches = append(matches, update)
+				matches = append(matches, match)
+			})
+			if err != nil {
+				return err
+			}
 		}
 
 		return nil
@@ -177,6 +230,7 @@ func (d *DB) FindMatches(
 	if err != nil {
 		return nil, err
 	}
+
 	return matches, nil
 }
 

@@ -9,9 +9,10 @@ import (
 // SessionInit is sent from a client to tower when he wants to open
 // a watch session for a particular channel.
 type SessionInit struct {
-	RewardRate   uint64
+	Version      uint16
+	MaxUpdates   uint16
+	RewardRate   uint32
 	SweepFeeRate lnwallet.SatPerVByte
-	NumUpdates   uint16
 }
 
 // A compile time check to ensure SessionInit implements the wtwire.Message
@@ -26,7 +27,7 @@ func (m *SessionInit) Decode(r io.Reader, pver uint32) error {
 	return readElements(r,
 		&m.RewardRate,
 		&m.SweepFeeRate,
-		&m.NumUpdates,
+		&m.MaxUpdates,
 	)
 }
 
@@ -38,7 +39,7 @@ func (m *SessionInit) Encode(w io.Writer, pver uint32) error {
 	return writeElements(w,
 		m.RewardRate,
 		m.SweepFeeRate,
-		m.NumUpdates,
+		m.MaxUpdates,
 	)
 }
 

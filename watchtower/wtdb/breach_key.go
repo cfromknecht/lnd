@@ -1,16 +1,12 @@
-package wtwire
+package wtdb
 
-import (
-	"encoding/hex"
+const BreachKeySize = 16
 
-	"github.com/roasbeef/btcd/chaincfg/chainhash"
-)
-
-type BreachKey [16]byte
+type BreachKey [BreachKeySize]byte
 
 func NewBreachKeyFromHash(hash *chainhash.Hash) BreachKey {
 	var key BreachKey
-	copy(key[:], key[:])
+	copy(key[:], key[BreachKeySize:])
 	return key
 }
 

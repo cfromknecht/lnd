@@ -11,7 +11,7 @@ import (
 
 	"github.com/lightningnetwork/lnd/watchtower/blockinspector"
 	"github.com/lightningnetwork/lnd/watchtower/punisher"
-	"github.com/lightningnetwork/lnd/watchtower/transactiondb"
+	"github.com/lightningnetwork/lnd/watchtower/wtdb"
 	"github.com/lightningnetwork/lnd/watchtower/wtwire"
 	"github.com/roasbeef/btcd/wire"
 )
@@ -53,7 +53,7 @@ func TestMatchingTransactions(t *testing.T) {
 		os.RemoveAll(testDir)
 	}()
 
-	db, err := transactiondb.Open(testDir)
+	db, err := wtdb.Open(testDir)
 	if err != nil {
 		t.Fatalf("unable to open transaction db: %v", err)
 	}

@@ -1,4 +1,4 @@
-package wtwire
+package wtdb
 
 import (
 	"encoding/hex"
@@ -6,11 +6,13 @@ import (
 	"github.com/roasbeef/btcd/chaincfg/chainhash"
 )
 
-type BreachHint [16]byte
+const BreachHintSize = 16
+
+type BreachHint [BreachHintSize]byte
 
 func NewBreachHintFromHash(hash *chainhash.Hash) BreachHint {
 	var hint BreachHint
-	copy(hint[:], hash[:16])
+	copy(hint[:], hash[:BreachHintSize])
 	return hint
 }
 

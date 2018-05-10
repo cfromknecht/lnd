@@ -67,6 +67,10 @@ func makeEmptyMessage(msgType MessageType) (Message, error) {
 		msg = &SessionInfo{}
 	case MsgAck:
 		msg = &Ack{}
+	case MsgSessionInit:
+		msg = &SessionInit{}
+	case MsgSessionAccept:
+		msg = &SessionAccept{}
 	default:
 		return nil, fmt.Errorf("unknown message type [%d]", msgType)
 	}

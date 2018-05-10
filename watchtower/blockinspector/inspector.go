@@ -6,19 +6,12 @@ import (
 	"sync/atomic"
 
 	"github.com/lightningnetwork/lnd/watchtower/punisher"
-	"github.com/lightningnetwork/lnd/watchtower/transactiondb"
+	"github.com/lightningnetwork/lnd/watchtower/wtdb"
 	"github.com/lightningnetwork/lnd/watchtower/wtwire"
 	"github.com/roasbeef/btcd/chaincfg/chainhash"
 	"github.com/roasbeef/btcd/wire"
 	_ "github.com/roasbeef/btcwallet/walletdb/bdb"
 )
-
-type match struct {
-	SessionID     uint64
-	DecryptionKey chainhash.Hash
-	CommitTx      *wire.MsgTx
-	EncryptedBlob []byte
-}
 
 // BlockInspector will check any incoming blocks agains the
 // transactions found in the database, and in case of matches
@@ -40,7 +33,7 @@ type BlobDecrypter interface {
 
 type Config struct {
 	NewBlocks <-chan *wire.MsgBlock
-	DB        *transactiondb.DB
+	DB        *wtdb.DB
 	Punisher  punisher.Punisher
 	Decrypter BlobDecrypter
 }
@@ -94,64 +87,63 @@ func (c *BlockInspector) watchBlocks() {
 func (c *BlockInspector) processNewBlock(block *wire.MsgBlock) {
 	defer c.wg.Done()
 
-	// Check each tx in the block against the prefixes in the db.
-	var txHints []wtwire.BreachHint
+	numTxnsInBlock := len(block.Transactions)
 
-	// Map from string(prefix) to TX.
-	txs := make(map[wtwire.BreachHint]*wire.MsgTx)
+	hintToTx := make(map[wtwire.BreachHint]*wire.MsgTx, numTxnsInBlock)
+	txHints := make([]wtwire.BreachHint, 0, numTxnsInBlock)
+
 	for _, tx := range block.Transactions {
 		fmt.Println("tx:", tx.TxHash())
 		hash := tx.TxHash()
 		hint := wtwire.NewBreachHintFromHash(&hash)
+
 		txHints = append(txHints, hint)
-		txs[hint] = tx
+		hintToTx[hint] = tx
 	}
 
+	// Check each tx in the block against the prefixes in the db.
 	matches, err := c.cfg.DB.FindMatches(txHints)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	for _, m := range matches {
-		tx, ok := txs[m.TxIDPrefix]
+
+	for _, match := range matches {
+		commitTx, ok := hintToTx[match.Hint]
 		if !ok {
 			fmt.Println("match not in tx id map!")
 			return
 		}
 
-		fmt.Println("match", m)
-		hit := &match{
-			DecryptionKey: tx.TxHash(),
-			CommitTx:      tx,
-			EncryptedBlob: m.EncryptedBlob[:],
-		}
+		fmt.Println("match", match)
 
 		c.wg.Add(1)
-		go c.handleMatch(hit)
+		go c.handleMatch(commitTx, match)
 	}
 }
 
-func (c *BlockInspector) handleMatch(m *match) {
+func (c *BlockInspector) handleMatch(commitTx *wire.MsgTx, match *wtdb.Match) {
 	defer c.wg.Done()
 
-	breachKey := wtwire.NewBreachKeyFromHash(&m.DecryptionKey)
+	info, err := c.cfg.DB.GetSessionInfo(&match.ID)
+	if err != nil {
+		fmt.Printf("unable to get session info: %v\n", err)
+		return
+	}
+
+	commitTxID := commitTx.TxHash()
+	breachKey := wtwire.NewBreachKeyFromHash(&commitTxID)
 
 	sweep, err := wtwire.DecryptSweepDetails(
-		m.EncryptedBlob, breachKey,
+		match.EncryptedBlob, breachKey, info.Version,
 	)
 	if err != nil {
 		fmt.Printf("unable to decrypt blob: %v\n", err)
 		return
 	}
 
-	info, err := c.cfg.DB.GetSessionInfo(m.SessionID)
-	if err != nil {
-		fmt.Printf("unable to get session info: %v\n", err)
-		return
-	}
-
 	p := &punisher.PunishInfo{
-		BreachedCommitmentTx: m.CommitTx,
+		BreachedCommitmentTx: commitTx,
 		//RevocationBasePoint:   info.RevocationBasePoint,
 		//LocalDelayedBasePoint: info.LocalDelayedBasePoint,
 		CsvDelay:          info.CsvDelay,
@@ -162,6 +154,7 @@ func (c *BlockInspector) handleMatch(m *match) {
 		Revocation:        sweep.Revocation,
 		PenaltySignature:  sweep.SweepSig,
 	}
+
 	if err := c.cfg.Punisher.Punish(p); err != nil {
 		fmt.Println(err)
 		return

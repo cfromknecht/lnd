@@ -15,7 +15,7 @@ import (
 	"github.com/lightningnetwork/lnd/watchtower/neutrinoblocks"
 	"github.com/lightningnetwork/lnd/watchtower/punisher"
 	"github.com/lightningnetwork/lnd/watchtower/server"
-	"github.com/lightningnetwork/lnd/watchtower/transactiondb"
+	"github.com/lightningnetwork/lnd/watchtower/wtdb"
 	"github.com/roasbeef/btcutil"
 	"github.com/roasbeef/btcwallet/walletdb"
 )
@@ -45,7 +45,7 @@ func wtMain() error {
 	}
 
 	initLogRotator(filepath.Join(cfg.LogDir, defaultLogFilename))
-	txDB, err := transactiondb.Open(cfg.DataDir)
+	txDB, err := wtdb.Open(cfg.DataDir)
 	if err != nil {
 		return err
 	}
