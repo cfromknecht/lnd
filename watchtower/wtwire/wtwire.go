@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/lightningnetwork/lnd/watchtower/wtdb"
 	"github.com/roasbeef/btcd/btcec"
 	"github.com/roasbeef/btcd/wire"
 )
@@ -60,12 +61,12 @@ func writeElement(w io.Writer, element interface{}) error {
 			return err
 		}
 
-	case BreachHint:
+	case wtdb.BreachHint:
 		if _, err := w.Write(e[:]); err != nil {
 			return err
 		}
 
-	case SessionID:
+	case wtdb.SessionID:
 		if _, err := w.Write(e[:]); err != nil {
 			return err
 		}
@@ -148,12 +149,12 @@ func readElement(r io.Reader, element interface{}) error {
 		}
 		*e = bytes
 
-	case *BreachHint:
+	case *wtdb.BreachHint:
 		if _, err := io.ReadFull(r, e[:]); err != nil {
 			return err
 		}
 
-	case *SessionID:
+	case *wtdb.SessionID:
 		if _, err := io.ReadFull(r, e[:]); err != nil {
 			return err
 		}

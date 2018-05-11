@@ -11,8 +11,8 @@ import (
 
 	"github.com/lightningnetwork/lnd/watchtower/blockinspector"
 	"github.com/lightningnetwork/lnd/watchtower/punisher"
+	"github.com/lightningnetwork/lnd/watchtower/sweep"
 	"github.com/lightningnetwork/lnd/watchtower/wtdb"
-	"github.com/lightningnetwork/lnd/watchtower/wtwire"
 	"github.com/roasbeef/btcd/wire"
 )
 
@@ -34,6 +34,12 @@ func (p *mockPunisher) Punish(info *punisher.PunishInfo) error {
 
 func makeArray32(i uint64) [32]byte {
 	var arr [32]byte
+	binary.BigEndian.PutUint64(arr[:], i)
+	return arr
+}
+
+func makeArray33(i uint64) [33]byte {
+	var arr [33]byte
 	binary.BigEndian.PutUint64(arr[:], i)
 	return arr
 }
@@ -69,8 +75,20 @@ func TestMatchingTransactions(t *testing.T) {
 		t.Fatalf("unable to start watcher: %v", err)
 	}
 
-	sessionInfo := &wtwire.SessionInfo{}
-	err = db.InsertSessionInfo(sessionInfo)
+	sessionInfo1 := &wtdb.SessionInfo{
+		ID:         makeArray33(1),
+		MaxUpdates: 10,
+	}
+	err = db.InsertSessionInfo(sessionInfo1)
+	if err != nil {
+		t.Fatalf("unable to insert session info: %v", err)
+	}
+
+	sessionInfo2 := &wtdb.SessionInfo{
+		ID:         makeArray33(2),
+		MaxUpdates: 10,
+	}
+	err = db.InsertSessionInfo(sessionInfo2)
 	if err != nil {
 		t.Fatalf("unable to insert session info: %v", err)
 	}
@@ -83,52 +101,51 @@ func TestMatchingTransactions(t *testing.T) {
 	hash2 := tx2.TxHash()
 	fmt.Println("tx:", tx2.TxHash())
 
-	sweepDetail1 := &wtwire.SweepDetails{
-		Revocation: makeArray32(1),
-		SweepSig:   makeArray64(1),
+	sweepDesc1 := &sweep.Descriptor{
+		Params: sweep.StaticScriptParams{
+			RevocationPubKey: makeArray33(1),
+			LocalDelayPubKey: makeArray33(1),
+			CSVDelay:         144,
+		},
+	}
+	sweepDesc2 := &sweep.Descriptor{
+		Params: sweep.StaticScriptParams{
+			RevocationPubKey: makeArray33(2),
+			LocalDelayPubKey: makeArray33(2),
+			CSVDelay:         144,
+		},
 	}
 
-	sweepDetail2 := &wtwire.SweepDetails{
-		Revocation: makeArray32(1),
-		SweepSig:   makeArray64(1),
-	}
-
-	encBlob1, err := wtwire.EncryptSweepDetails(
-		sweepDetail1, wtwire.NewBreachKeyFromHash(&hash),
-	)
+	breachKey1 := wtdb.NewBreachKeyFromHash(&hash)
+	encBlob1, err := sweepDesc1.Encrypt(breachKey1[:], 0)
 	if err != nil {
 		t.Fatalf("unable to encrypt sweep detail 1: %v", err)
 	}
 
-	encBlob2, err := wtwire.EncryptSweepDetails(
-		sweepDetail2, wtwire.NewBreachKeyFromHash(&hash2),
-	)
+	breachKey2 := wtdb.NewBreachKeyFromHash(&hash2)
+	encBlob2, err := sweepDesc2.Encrypt(breachKey2[:], 0)
 	if err != nil {
 		t.Fatalf("unable to encrypt sweep detail 2: %v", err)
 	}
 
 	// Add a few blobs to the database.
-	var prefix1 [16]byte
-	copy(prefix1[:], hash[:])
-	var blob1 [wtwire.EncryptedBlobSize]byte
-	copy(blob1[:], testBlob1)
-	txBlob1 := &wtwire.StateUpdate{
-		TxIDPrefix:    prefix1,
+	txBlob1 := &wtdb.SessionStateUpdate{
+		ID:            makeArray33(1),
+		Hint:          wtdb.NewBreachHintFromHash(&hash),
 		EncryptedBlob: encBlob1,
+		SeqNum:        1,
 	}
-	if err := db.InsertTransaction(txBlob1); err != nil {
+	if err := db.InsertStateUpdate(txBlob1); err != nil {
 		t.Fatalf("unable to add tx to db: %v", err)
 	}
 
-	var prefix2 [16]byte
-	copy(prefix2[:], hash2[:])
-	var blob2 [wtwire.EncryptedBlobSize]byte
-	copy(blob2[:], testBlob2)
-	txBlob2 := &wtwire.StateUpdate{
-		TxIDPrefix:    prefix2,
+	txBlob2 := &wtdb.SessionStateUpdate{
+		ID:            makeArray33(2),
+		Hint:          wtdb.NewBreachHintFromHash(&hash2),
 		EncryptedBlob: encBlob2,
+		SeqNum:        1,
 	}
-	if err := db.InsertTransaction(txBlob2); err != nil {
+	if err := db.InsertStateUpdate(txBlob2); err != nil {
 		t.Fatalf("unable to add tx to db: %v", err)
 	}
 

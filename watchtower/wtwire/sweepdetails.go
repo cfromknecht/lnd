@@ -1,5 +1,6 @@
 package wtwire
 
+/*
 import (
 	"bytes"
 	"crypto/aes"
@@ -112,3 +113,4 @@ func DecryptSweepDetails(ciphertext []byte, key BreachKey) (*SweepDetails, error
 
 	return s, nil
 }
+*/

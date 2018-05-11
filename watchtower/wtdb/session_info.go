@@ -2,9 +2,12 @@ package wtdb
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 
 	"github.com/lightningnetwork/lnd/keychain"
+	"github.com/lightningnetwork/lnd/lnwallet"
+	"github.com/roasbeef/btcd/btcec"
 	"github.com/roasbeef/btcd/wire"
 )
 
@@ -15,16 +18,14 @@ var (
 	ErrSessionExpired       = errors.New("all session updates have been consumed")
 )
 
-var byteOrder binary.BigEndian
-
 type SessionInfo struct {
 	ID SessionID
 
 	Version uint16
 
-	MaxUpdates    uint16
-	LastSeqNum    uint16
-	LastClientAck uint16
+	MaxUpdates  uint16
+	LastSeqNum  uint16
+	LastApplied uint16
 
 	RewardRate   uint32
 	SweepFeeRate lnwallet.SatPerVByte
@@ -49,29 +50,29 @@ func (s *SessionInfo) AcceptUpdateSequence(seqNum, lastApplied uint16) error {
 		return ErrSessionExpired
 	}
 
-	info.SeqNum = seqNum
-	info.LastApplied = lastApplied
+	s.LastSeqNum = seqNum
+	s.LastApplied = lastApplied
 
 	return nil
 }
 
 func (s *SessionInfo) Encode(w io.Writer) error {
-	if _, err := binary.Write(w, byteOrder, s.Version); err != nil {
+	if err := binary.Write(w, byteOrder, s.Version); err != nil {
 		return err
 	}
-	if _, err := binary.Write(w, byteOrder, s.MaxUpdates); err != nil {
+	if err := binary.Write(w, byteOrder, s.MaxUpdates); err != nil {
 		return err
 	}
-	if _, err := binary.Write(w, byteOrder, s.LastSeqNum); err != nil {
+	if err := binary.Write(w, byteOrder, s.LastSeqNum); err != nil {
 		return err
 	}
-	if _, err := binary.Write(w, byteOrder, s.LastClientAck); err != nil {
+	if err := binary.Write(w, byteOrder, s.LastApplied); err != nil {
 		return err
 	}
-	if _, err := binary.Write(w, byteOrder, s.RewardRate); err != nil {
+	if err := binary.Write(w, byteOrder, s.RewardRate); err != nil {
 		return err
 	}
-	if _, err := binary.Write(w, byteOrder, s.SweepFeeRate); err != nil {
+	if err := binary.Write(w, byteOrder, s.SweepFeeRate); err != nil {
 		return err
 	}
 
@@ -79,22 +80,22 @@ func (s *SessionInfo) Encode(w io.Writer) error {
 }
 
 func (s *SessionInfo) Decode(r io.Reader) error {
-	if _, err := binary.Read(w, byteOrder, &s.Version); err != nil {
+	if err := binary.Read(r, byteOrder, &s.Version); err != nil {
 		return err
 	}
-	if _, err := binary.Read(w, byteOrder, &s.MaxUpdates); err != nil {
+	if err := binary.Read(r, byteOrder, &s.MaxUpdates); err != nil {
 		return err
 	}
-	if _, err := binary.Read(w, byteOrder, &s.LastSeqNum); err != nil {
+	if err := binary.Read(r, byteOrder, &s.LastSeqNum); err != nil {
 		return err
 	}
-	if _, err := binary.Read(w, byteOrder, &s.LastClientAck); err != nil {
+	if err := binary.Read(r, byteOrder, &s.LastApplied); err != nil {
 		return err
 	}
-	if _, err := binary.Read(w, byteOrder, &s.RewardRate); err != nil {
+	if err := binary.Read(r, byteOrder, &s.RewardRate); err != nil {
 		return err
 	}
-	if _, err := binary.Read(w, byteOrder, &s.SweepFeeRate); err != nil {
+	if err := binary.Read(r, byteOrder, &s.SweepFeeRate); err != nil {
 		return err
 	}
 

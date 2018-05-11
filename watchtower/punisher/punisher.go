@@ -8,6 +8,8 @@ import (
 	"github.com/lightninglabs/neutrino"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/watchtower/sweep"
+	"github.com/lightningnetwork/lnd/watchtower/wtdb"
 	"github.com/roasbeef/btcd/blockchain"
 	"github.com/roasbeef/btcd/btcec"
 	"github.com/roasbeef/btcd/txscript"
@@ -16,11 +18,13 @@ import (
 )
 
 type PunishInfo struct {
+	SessionInfo           wtdb.SessionInfo
+	Descriptor            sweep.Descriptor
 	BreachedCommitmentTx  *wire.MsgTx
 	RevocationBasePoint   *btcec.PublicKey
 	LocalDelayedBasePoint *btcec.PublicKey
 	CsvDelay              uint16
-	FeeRate               uint64
+	FeeRate               lnwallet.SatPerVByte
 	OutputScript          []byte
 	TowerReward           uint64
 	TowerOutputScript     []byte
@@ -87,16 +91,14 @@ func (p *punisher) Punish(info *PunishInfo) error {
 	if err := vm.Execute(); err != nil {
 		return err
 	}
-	if err := p.chainService.SendTransaction(penaltyTx); err != nil {
-		return err
-	}
 
-	return nil
+	return p.chainService.SendTransaction(penaltyTx)
 }
 
 func AssemblePenaltyTx(commitTx *wire.MsgTx, localRevocationBasePoint,
-	remoteDelayBasePoint *btcec.PublicKey, remoteCsvDelay uint16, feeRate,
-	towerReward uint64, outputScript, towerOutputScript []byte,
+	remoteDelayBasePoint *btcec.PublicKey, remoteCsvDelay uint16,
+	feeRate lnwallet.SatPerVByte, towerReward uint64,
+	outputScript, towerOutputScript []byte,
 	revocation [32]byte) (*wire.MsgTx, []byte, error) {
 
 	_, commitmentPoint := btcec.PrivKeyFromBytes(btcec.S256(),

@@ -1,5 +1,11 @@
 package wtdb
 
+import (
+	"encoding/hex"
+
+	"github.com/roasbeef/btcd/chaincfg/chainhash"
+)
+
 const BreachKeySize = 16
 
 type BreachKey [BreachKeySize]byte

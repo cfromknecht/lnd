@@ -6,9 +6,8 @@ import (
 	"sync/atomic"
 
 	"github.com/lightningnetwork/lnd/watchtower/punisher"
+	"github.com/lightningnetwork/lnd/watchtower/sweep"
 	"github.com/lightningnetwork/lnd/watchtower/wtdb"
-	"github.com/lightningnetwork/lnd/watchtower/wtwire"
-	"github.com/roasbeef/btcd/chaincfg/chainhash"
 	"github.com/roasbeef/btcd/wire"
 	_ "github.com/roasbeef/btcwallet/walletdb/bdb"
 )
@@ -27,15 +26,10 @@ type BlockInspector struct {
 	quit chan struct{}
 }
 
-type BlobDecrypter interface {
-	DecryptBlob([]byte, wtwire.BreachKey) ([]byte, error)
-}
-
 type Config struct {
 	NewBlocks <-chan *wire.MsgBlock
 	DB        *wtdb.DB
 	Punisher  punisher.Punisher
-	Decrypter BlobDecrypter
 }
 
 func New(cfg *Config) *BlockInspector {
@@ -89,13 +83,13 @@ func (c *BlockInspector) processNewBlock(block *wire.MsgBlock) {
 
 	numTxnsInBlock := len(block.Transactions)
 
-	hintToTx := make(map[wtwire.BreachHint]*wire.MsgTx, numTxnsInBlock)
-	txHints := make([]wtwire.BreachHint, 0, numTxnsInBlock)
+	hintToTx := make(map[wtdb.BreachHint]*wire.MsgTx, numTxnsInBlock)
+	txHints := make([]wtdb.BreachHint, 0, numTxnsInBlock)
 
 	for _, tx := range block.Transactions {
 		fmt.Println("tx:", tx.TxHash())
 		hash := tx.TxHash()
-		hint := wtwire.NewBreachHintFromHash(&hash)
+		hint := wtdb.NewBreachHintFromHash(&hash)
 
 		txHints = append(txHints, hint)
 		hintToTx[hint] = tx
@@ -132,32 +126,28 @@ func (c *BlockInspector) handleMatch(commitTx *wire.MsgTx, match *wtdb.Match) {
 	}
 
 	commitTxID := commitTx.TxHash()
-	breachKey := wtwire.NewBreachKeyFromHash(&commitTxID)
+	breachKey := wtdb.NewBreachKeyFromHash(&commitTxID)
 
-	sweep, err := wtwire.DecryptSweepDetails(
-		match.EncryptedBlob, breachKey, info.Version,
+	sweepDesc, err := sweep.DescriptorFromBlob(
+		match.EncryptedBlob, breachKey[:], info.Version,
 	)
 	if err != nil {
 		fmt.Printf("unable to decrypt blob: %v\n", err)
 		return
 	}
 
+	// TODO(conner): rederive address privkey from descriptor
+
 	p := &punisher.PunishInfo{
 		BreachedCommitmentTx: commitTx,
 		//RevocationBasePoint:   info.RevocationBasePoint,
 		//LocalDelayedBasePoint: info.LocalDelayedBasePoint,
-		CsvDelay:          info.CsvDelay,
-		FeeRate:           info.FeeRate,
-		OutputScript:      info.OutputScript,
-		TowerReward:       info.OutputReward,
-		TowerOutputScript: info.TowerOutputScript,
-		Revocation:        sweep.Revocation,
-		PenaltySignature:  sweep.SweepSig,
+		CsvDelay: uint16(sweepDesc.Params.CSVDelay),
+		FeeRate:  info.SweepFeeRate,
 	}
 
 	if err := c.cfg.Punisher.Punish(p); err != nil {
 		fmt.Println(err)
 		return
 	}
-
 }

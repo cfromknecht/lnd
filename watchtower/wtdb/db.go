@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 
 	"github.com/coreos/bbolt"
-	"github.com/lightningnetwork/lnd/watchtower/wtwire"
 )
 
 const (
@@ -63,10 +62,6 @@ func (d *DB) initBuckets() error {
 	return d.DB.Update(func(tx *bolt.Tx) error {
 		var err error
 		_, err = tx.CreateBucketIfNotExists(hintBucket)
-		if err != nil {
-			return err
-		}
-		_, err = tx.CreateBucketIfNotExists(blobBucket)
 		if err != nil {
 			return err
 		}
@@ -178,14 +173,22 @@ func (d *DB) InsertStateUpdate(update *SessionStateUpdate) error {
 
 func (d *DB) ListEntries() error {
 	return d.View(func(tx *bolt.Tx) error {
-		blobs := tx.Bucket(blobBucket)
-		if blobs == nil {
+		hints := tx.Bucket(hintBucket)
+		if hints == nil {
 			return ErrCorruptTxnDB
 		}
 
-		return blobs.ForEach(func(k, v []byte) error {
-			fmt.Printf("key=%s, value=%s\n", k, v)
-			return nil
+		return hints.ForEach(func(hint, _ []byte) error {
+			hintSessions := tx.Bucket(hint)
+			if hintSessions == nil {
+				return ErrCorruptTxnDB
+			}
+
+			return hintSessions.ForEach(func(id, blob []byte) error {
+				fmt.Printf("hint=%s, session_id=%s, blob=%s\n",
+					hint, id, blob)
+				return nil
+			})
 		})
 	})
 }
@@ -197,7 +200,7 @@ type Match struct {
 }
 
 func (d *DB) FindMatches(blockHints []BreachHint) ([]*Match, error) {
-	var matches []*SessionStateUpdate
+	var matches []*Match
 	err := d.View(func(tx *bolt.Tx) error {
 		hints := tx.Bucket(hintBucket)
 		if hints == nil {
@@ -219,6 +222,8 @@ func (d *DB) FindMatches(blockHints []BreachHint) ([]*Match, error) {
 				copy(match.EncryptedBlob, blob)
 
 				matches = append(matches, match)
+
+				return nil
 			})
 			if err != nil {
 				return err
@@ -237,10 +242,6 @@ func (d *DB) FindMatches(blockHints []BreachHint) ([]*Match, error) {
 func (d *DB) Wipe() error {
 	return d.Update(func(tx *bolt.Tx) error {
 		err := tx.DeleteBucket(hintBucket)
-		if err != nil && err != bolt.ErrBucketNotFound {
-			return err
-		}
-		err = tx.DeleteBucket(blobBucket)
 		if err != nil && err != bolt.ErrBucketNotFound {
 			return err
 		}

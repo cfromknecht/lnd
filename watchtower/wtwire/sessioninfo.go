@@ -1,5 +1,6 @@
 package wtwire
 
+/*
 import "io"
 
 // SessionInfo is sent from a client to tower when he wants to open
@@ -67,6 +68,7 @@ func (t *SessionInfo) MsgType() MessageType {
 //
 // This is part of the wtwire.Message interface.
 func (t *SessionInfo) MaxPayloadLength(uint32) uint32 {
-	// TODO
+	// TtODO
 	return 1024
 }
+*/

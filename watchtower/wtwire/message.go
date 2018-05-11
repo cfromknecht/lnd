@@ -64,7 +64,7 @@ func makeEmptyMessage(msgType MessageType) (Message, error) {
 	case MsgStateUpdate:
 		msg = &StateUpdate{}
 	case MsgSessionInfo:
-		msg = &SessionInfo{}
+		//msg = &SessionInfo{}
 	case MsgAck:
 		msg = &Ack{}
 	case MsgSessionInit:

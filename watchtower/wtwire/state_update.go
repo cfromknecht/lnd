@@ -1,13 +1,17 @@
 package wtwire
 
-import "io"
+import (
+	"io"
+
+	"github.com/lightningnetwork/lnd/watchtower/wtdb"
+)
 
 //const EncryptedBlobSize = 512
 
 type StateUpdate struct {
 	SeqNum        uint16
 	LastApplied   uint16
-	Hint          BreachHint
+	Hint          wtdb.BreachHint
 	EncryptedBlob []byte
 }
 
