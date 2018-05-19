@@ -5,22 +5,26 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/lightninglabs/neutrino"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/watchtower/sweep"
 	"github.com/lightningnetwork/lnd/watchtower/wtdb"
 	"github.com/roasbeef/btcd/blockchain"
 	"github.com/roasbeef/btcd/btcec"
+	"github.com/roasbeef/btcd/chaincfg"
 	"github.com/roasbeef/btcd/txscript"
 	"github.com/roasbeef/btcd/wire"
 	"github.com/roasbeef/btcutil"
 )
 
+var (
+	ErrOutputNotFound = errors.New("unable to find output on commit tx")
+)
+
 type PunishInfo struct {
-	SessionInfo           wtdb.SessionInfo
-	Descriptor            sweep.Descriptor
 	BreachedCommitmentTx  *wire.MsgTx
+	SessionInfo           *wtdb.SessionInfo
+	Descriptor            *sweep.Descriptor
 	RevocationBasePoint   *btcec.PublicKey
 	LocalDelayedBasePoint *btcec.PublicKey
 	CsvDelay              uint16
@@ -33,6 +37,8 @@ type PunishInfo struct {
 }
 
 type Config struct {
+	ChainParams     *chaincfg.Params
+	SendTransaction func(*wire.MsgTx) error
 }
 
 type Punisher interface {
@@ -40,14 +46,14 @@ type Punisher interface {
 }
 
 type punisher struct {
-	chainService *neutrino.ChainService
+	cfg *Config
 }
 
-func New(chainService *neutrino.ChainService) (*punisher, error) {
-
+func New(cfg *Config) (*punisher, error) {
 	p := &punisher{
-		chainService: chainService,
+		cfg: cfg,
 	}
+
 	return p, nil
 }
 
@@ -92,7 +98,112 @@ func (p *punisher) Punish(info *PunishInfo) error {
 		return err
 	}
 
-	return p.chainService.SendTransaction(penaltyTx)
+	return p.cfg.SendTransaction(penaltyTx)
+}
+
+func assemblePenaltyTx(info *PunishInfo) (*wire.MsgTx, error) {
+	sweepDesc := info.Descriptor
+
+	revocationPubKey, err := btcec.ParsePubKey(
+		sweepDesc.Params.RevocationPubKey[:], btcec.S256(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	localDelayedPubKey, err := btcec.ParsePubKey(
+		sweepDesc.Params.LocalDelayPubKey[:], btcec.S256(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	toLocalScript, err := lnwallet.CommitScriptToSelf(
+		localDelayedPubKey, revocationPubKey, sweepDesc.Params.CSVDelay,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	toLocalWitnessHash, err := lnwallet.WitnessScriptHash(toLocalScript)
+	if err != nil {
+		return nil, err
+	}
+
+	commitHash := info.BreachedCommitmentTx.TxHash()
+
+	toLocalIndex, toLocalTxOut, err := findTxOutByPkScript(
+		info.BreachedCommitmentTx, toLocalWitnessHash,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	toLocalOutPoint := wire.OutPoint{
+		Hash:  commitHash,
+		Index: toLocalIndex,
+	}
+
+	var (
+		penaltyTxn     = wire.NewMsgTx(2)
+		weightEstimate lnwallet.TxWeightEstimator
+		totalInputs    int64
+	)
+
+	penaltyTxn.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: toLocalOutPoint,
+	})
+	weightEstimate.AddWitnessInput(lnwallet.ToLocalPenaltyWitnessSize)
+	totalInputs += toLocalTxOut.Value
+
+	if info.Descriptor.HasP2WKHOutput {
+		p2wkh160 := btcutil.Hash160(sweepDesc.Params.P2WKHPubKey[:])
+		p2wkhScript := append([]byte{0}, p2wkh160...)
+
+		p2wkhIndex, p2wkhTxOut, err := findTxOutByPkScript(
+			info.BreachedCommitmentTx, p2wkhScript,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		p2wkhOutPoint := wire.OutPoint{
+			Hash:  commitHash,
+			Index: p2wkhIndex,
+		}
+
+		penaltyTxn.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: p2wkhOutPoint,
+		})
+		weightEstimate.AddWitnessInput(lnwallet.P2WKHWitnessSize)
+		totalInputs += p2wkhTxOut.Value
+	}
+
+	weightEstimate.AddP2WKHOutput()
+	weightEstimate.AddP2WKHOutput()
+
+	txVSize := int64(weightEstimate.VSize())
+
+	penaltyTxn.AddTxOut(&wire.TxOut{
+		PkScript: info.SessionInfo.RewardAddress,
+		Value:    toLocalTxOut.Value,
+	})
+
+	penaltyTxn.AddTxOut(&wire.TxOut{
+		PkScript: info.SessionInfo.SweepAddress,
+		Value:    p2wkhTxOut.Value,
+	})
+}
+
+func findTxOutByPkScript(txn *wire.MsgTx,
+	pkScript []byte) (uint32, *wire.TxOut, error) {
+
+	found, index := lnwallet.FindScriptOutputIndex(txn, pkScript)
+	if !found {
+		return 0, nil, ErrOutputNotFound
+	}
+
+	return index, txn.TxOut[index], nil
 }
 
 func AssemblePenaltyTx(commitTx *wire.MsgTx, localRevocationBasePoint,

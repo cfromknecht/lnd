@@ -25,6 +25,7 @@ const (
 	MsgWatchRequest  MessageType = 17
 	MsgWatchResponse MessageType = 18
 	MsgAck           MessageType = 19
+	MsgFail          MessageType = 21
 	MsgSessionInfo   MessageType = 20
 
 	MsgSessionInit   MessageType = 30
@@ -63,10 +64,10 @@ func makeEmptyMessage(msgType MessageType) (Message, error) {
 		msg = &WatchResponse{}
 	case MsgStateUpdate:
 		msg = &StateUpdate{}
-	case MsgSessionInfo:
-		//msg = &SessionInfo{}
 	case MsgAck:
 		msg = &Ack{}
+	case MsgFail:
+		msg = &Fail{}
 	case MsgSessionInit:
 		msg = &SessionInit{}
 	case MsgSessionAccept:

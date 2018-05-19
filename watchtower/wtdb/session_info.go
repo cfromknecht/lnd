@@ -5,10 +5,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lnwallet"
-	"github.com/roasbeef/btcd/btcec"
-	"github.com/roasbeef/btcd/wire"
 )
 
 var (
@@ -30,7 +27,14 @@ type SessionInfo struct {
 	RewardRate   uint32
 	SweepFeeRate lnwallet.SatPerVByte
 
-	RewardKeyDesc keychain.KeyDescriptor
+	RewardAddress []byte
+	SweepAddress  []byte
+}
+
+func (s *SessionInfo) ComputeSweepOutputs(totalAmt int64,
+	vSize int64) (int64, int64, error) {
+
+	rewardAmt := (totalAmt*int64(s.RewardRate) + 999) / 1000
 }
 
 func (s *SessionInfo) AcceptUpdateSequence(seqNum, lastApplied uint16) error {
@@ -75,8 +79,12 @@ func (s *SessionInfo) Encode(w io.Writer) error {
 	if err := binary.Write(w, byteOrder, s.SweepFeeRate); err != nil {
 		return err
 	}
+	if _, err := w.Write(s.RewardAddress); err != nil {
+		return err
+	}
 
-	return writeKeyDescriptor(w, &s.RewardKeyDesc)
+	_, err := w.Write(s.SweepAddress)
+	return err
 }
 
 func (s *SessionInfo) Decode(r io.Reader) error {
@@ -99,67 +107,12 @@ func (s *SessionInfo) Decode(r io.Reader) error {
 		return err
 	}
 
-	return readKeyDescriptor(r, &s.RewardKeyDesc)
-}
-
-func writeKeyDescriptor(w io.Writer, keyDesc *keychain.KeyDescriptor) error {
-	err := binary.Write(w, byteOrder, keyDesc.Family)
-	if err != nil {
+	s.RewardAddress = make([]byte, 64)
+	if _, err := r.Read(s.RewardAddress); err != nil {
 		return err
 	}
 
-	err = binary.Write(w, byteOrder, keyDesc.Index)
-	if err != nil {
-		return err
-	}
-
-	hasPubKey := keyDesc.PubKey != nil
-	err = binary.Write(w, byteOrder, hasPubKey)
-	if err != nil {
-		return err
-	}
-
-	if hasPubKey {
-		serializedPubKey := keyDesc.PubKey.SerializeCompressed()
-		err = wire.WriteVarBytes(w, 0, serializedPubKey)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func readKeyDescriptor(r io.Reader, keyDesc *keychain.KeyDescriptor) error {
-	err := binary.Read(r, byteOrder, &keyDesc.Family)
-	if err != nil {
-		return err
-	}
-
-	err = binary.Read(r, byteOrder, &keyDesc.Index)
-	if err != nil {
-		return err
-	}
-
-	var hasPubKey bool
-	err = binary.Read(r, byteOrder, &hasPubKey)
-	if err != nil {
-		return err
-	}
-
-	if hasPubKey {
-		serializedPubKey, err := wire.ReadVarBytes(r, 0, 33, "pubkey")
-		if err != nil {
-			return err
-		}
-
-		keyDesc.PubKey, err = btcec.ParsePubKey(
-			serializedPubKey, btcec.S256(),
-		)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
+	s.SweepAddress = make([]byte, 64)
+	_, err := r.Read(s.SweepAddress)
+	return err
 }

@@ -1,4 +1,4 @@
-package blockinspector_test
+package lookout_test
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lightningnetwork/lnd/watchtower/blockinspector"
+	"github.com/lightningnetwork/lnd/watchtower/lookout"
 	"github.com/lightningnetwork/lnd/watchtower/punisher"
 	"github.com/lightningnetwork/lnd/watchtower/sweep"
 	"github.com/lightningnetwork/lnd/watchtower/wtdb"
@@ -66,12 +66,12 @@ func TestMatchingTransactions(t *testing.T) {
 	blocks := make(chan *wire.MsgBlock)
 	matches := make(chan *punisher.PunishInfo)
 	punisher := &mockPunisher{matches: matches}
-	inspector := blockinspector.New(&blockinspector.Config{
+	watcher := lookout.New(&lookout.Config{
 		NewBlocks: blocks,
 		DB:        db,
 		Punisher:  punisher,
 	})
-	if err := inspector.Start(); err != nil {
+	if err := watcher.Start(); err != nil {
 		t.Fatalf("unable to start watcher: %v", err)
 	}
 

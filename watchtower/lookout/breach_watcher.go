@@ -1,4 +1,4 @@
-package blockinspector
+package lookout
 
 import (
 	"fmt"
@@ -12,11 +12,16 @@ import (
 	_ "github.com/roasbeef/btcwallet/walletdb/bdb"
 )
 
-// BlockInspector will check any incoming blocks agains the
-// transactions found in the database, and in case of matches
-// send the information needed to create a penalty transaction
-// to the punisher.
-type BlockInspector struct {
+type Config struct {
+	NewBlocks <-chan *wire.MsgBlock
+	DB        *wtdb.DB
+	Punisher  punisher.Punisher
+}
+
+// Lookout will check any incoming blocks against the transactions found in the
+// database, and in case of matches send the information needed to create a
+// penalty transaction to the punisher.
+type Lookout struct {
 	started  int32 // atomic
 	shutdown int32 // atomic
 
@@ -26,20 +31,14 @@ type BlockInspector struct {
 	quit chan struct{}
 }
 
-type Config struct {
-	NewBlocks <-chan *wire.MsgBlock
-	DB        *wtdb.DB
-	Punisher  punisher.Punisher
-}
-
-func New(cfg *Config) *BlockInspector {
-	return &BlockInspector{
+func New(cfg *Config) *Lookout {
+	return &Lookout{
 		cfg:  cfg,
 		quit: make(chan struct{}),
 	}
 }
 
-func (c *BlockInspector) Start() error {
+func (c *Lookout) Start() error {
 	if !atomic.CompareAndSwapInt32(&c.started, 0, 1) {
 		return nil
 	}
@@ -50,7 +49,7 @@ func (c *BlockInspector) Start() error {
 	return nil
 }
 
-func (c *BlockInspector) Stop() error {
+func (c *Lookout) Stop() error {
 	if !atomic.CompareAndSwapInt32(&c.shutdown, 0, 1) {
 		return nil
 	}
@@ -61,7 +60,7 @@ func (c *BlockInspector) Stop() error {
 	return nil
 }
 
-func (c *BlockInspector) watchBlocks() {
+func (c *Lookout) watchBlocks() {
 	defer c.wg.Done()
 
 	for {
@@ -78,7 +77,7 @@ func (c *BlockInspector) watchBlocks() {
 	}
 }
 
-func (c *BlockInspector) processNewBlock(block *wire.MsgBlock) {
+func (c *Lookout) processNewBlock(block *wire.MsgBlock) {
 	defer c.wg.Done()
 
 	numTxnsInBlock := len(block.Transactions)
@@ -116,7 +115,7 @@ func (c *BlockInspector) processNewBlock(block *wire.MsgBlock) {
 	}
 }
 
-func (c *BlockInspector) handleMatch(commitTx *wire.MsgTx, match *wtdb.Match) {
+func (c *Lookout) handleMatch(commitTx *wire.MsgTx, match *wtdb.Match) {
 	defer c.wg.Done()
 
 	info, err := c.cfg.DB.GetSessionInfo(&match.ID)
@@ -136,14 +135,10 @@ func (c *BlockInspector) handleMatch(commitTx *wire.MsgTx, match *wtdb.Match) {
 		return
 	}
 
-	// TODO(conner): rederive address privkey from descriptor
-
 	p := &punisher.PunishInfo{
 		BreachedCommitmentTx: commitTx,
-		//RevocationBasePoint:   info.RevocationBasePoint,
-		//LocalDelayedBasePoint: info.LocalDelayedBasePoint,
-		CsvDelay: uint16(sweepDesc.Params.CSVDelay),
-		FeeRate:  info.SweepFeeRate,
+		SessionInfo:          info,
+		Descriptor:           sweepDesc,
 	}
 
 	if err := c.cfg.Punisher.Punish(p); err != nil {

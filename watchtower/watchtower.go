@@ -10,13 +10,13 @@ import (
 
 	flags "github.com/btcsuite/go-flags"
 	"github.com/lightninglabs/neutrino"
-	"github.com/lightningnetwork/lnd/watchtower/blockinspector"
 	"github.com/lightningnetwork/lnd/watchtower/config"
+	"github.com/lightningnetwork/lnd/watchtower/lookout"
 	"github.com/lightningnetwork/lnd/watchtower/neutrinoblocks"
 	"github.com/lightningnetwork/lnd/watchtower/punisher"
 	"github.com/lightningnetwork/lnd/watchtower/server"
 	"github.com/lightningnetwork/lnd/watchtower/wtdb"
-	"github.com/roasbeef/btcutil"
+	"github.com/roasbeef/btcd/wire"
 	"github.com/roasbeef/btcwallet/walletdb"
 )
 
@@ -39,10 +39,12 @@ func wtMain() error {
 	fmt.Println(cfg.Litecoin)
 	fmt.Println(cfg.Bitcoin.Params.Name)
 
-	address, err := btcutil.DecodeAddress(cfg.RewardAddress, cfg.Bitcoin.Params)
-	if err != nil {
-		return err
-	}
+	/*
+		address, err := btcutil.DecodeAddress(cfg.RewardAddress, cfg.Bitcoin.Params)
+		if err != nil {
+			return err
+		}
+	*/
 
 	initLogRotator(filepath.Join(cfg.LogDir, defaultLogFilename))
 	txDB, err := wtdb.Open(cfg.DataDir)
@@ -87,12 +89,18 @@ func wtMain() error {
 		return err
 	}
 
-	punisher, err := punisher.New(svc)
+	punisher, err := punisher.New(&punisher.Config{
+		ChainParams: cfg.Bitcoin.Params,
+		SendTransaction: func(tx *wire.MsgTx) error {
+			return svc.SendTransaction(tx)
+		},
+		//GetPrivKey
+	})
 	if err != nil {
 		return err
 	}
 
-	watcher := blockinspector.New(&blockinspector.Config{
+	watcher := lookout.New(&lookout.Config{
 		NewBlocks: blocks.NewBlocks,
 		DB:        txDB,
 		Punisher:  punisher,
@@ -106,7 +114,13 @@ func wtMain() error {
 	privKey := config.ServerPrivKey
 	fmt.Println("server privKey: ", hex.EncodeToString(privKey.Serialize()))
 	listenAddrs := []string{"localhost:9777"}
-	server, err := server.New(listenAddrs, privKey, txDB, address)
+	server, err := server.New(&server.Config{
+		ListenAddrs: listenAddrs,
+		NodePrivKey: privKey,
+		DB:          txDB,
+		Watcher:     watcher,
+		//NewAddress
+	})
 	if err != nil {
 		return err
 	}
