@@ -6,12 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"sync"
 
+	"github.com/boltdb/bolt"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -90,6 +92,8 @@ var (
 	}
 )
 
+type chanRestoreFunc func() (*LightningChannel, *LightningChannel, error)
+
 // CreateTestChannels creates to fully populated channels to be used within
 // testing fixtures. The channels will be returned as if the funding process
 // has just completed.  The channel itself is funded with 10 BTC, with 5 BTC
@@ -97,10 +101,12 @@ var (
 // function also returns a "cleanup" function that is meant to be called once
 // the test has been finalized. The clean up function will remote all temporary
 // files created
-func CreateTestChannels() (*LightningChannel, *LightningChannel, func(), error) {
+func CreateTestChannels() (*LightningChannel, *LightningChannel, func(),
+	chanRestoreFunc, error) {
+
 	channelCapacity, err := btcutil.NewAmount(10)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	channelBal := channelCapacity / 2
@@ -190,23 +196,23 @@ func CreateTestChannels() (*LightningChannel, *LightningChannel, func(), error) 
 
 	bobRoot, err := chainhash.NewHash(bobKeys[0].Serialize())
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	bobPreimageProducer := shachain.NewRevocationProducer(*bobRoot)
 	bobFirstRevoke, err := bobPreimageProducer.AtIndex(0)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	bobCommitPoint := ComputeCommitmentPoint(bobFirstRevoke[:])
 
 	aliceRoot, err := chainhash.NewHash(aliceKeys[0].Serialize())
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	alicePreimageProducer := shachain.NewRevocationProducer(*aliceRoot)
 	aliceFirstRevoke, err := alicePreimageProducer.AtIndex(0)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	aliceCommitPoint := ComputeCommitmentPoint(aliceFirstRevoke[:])
 
@@ -214,25 +220,25 @@ func CreateTestChannels() (*LightningChannel, *LightningChannel, func(), error) 
 		channelBal, &aliceCfg, &bobCfg, aliceCommitPoint, bobCommitPoint,
 		*fundingTxIn)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	alicePath, err := ioutil.TempDir("", "alicedb")
 	dbAlice, err := channeldb.Open(alicePath)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	bobPath, err := ioutil.TempDir("", "bobdb")
 	dbBob, err := channeldb.Open(bobPath)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	estimator := &StaticFeeEstimator{24}
 	feePerVSize, err := estimator.EstimateFeePerVSize(1)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	feePerKw := feePerVSize.FeePerKWeight()
 	commitFee := calcStaticFee(0)
@@ -258,7 +264,7 @@ func CreateTestChannels() (*LightningChannel, *LightningChannel, func(), error) 
 
 	var chanIDBytes [8]byte
 	if _, err := io.ReadFull(rand.Reader, chanIDBytes[:]); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	shortChanID := lnwire.NewShortChanIDFromInt(
@@ -314,33 +320,33 @@ func CreateTestChannels() (*LightningChannel, *LightningChannel, func(), error) 
 		aliceSigner, pCache, aliceChannelState,
 	)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	channelBob, err := NewLightningChannel(
 		bobSigner, pCache, bobChannelState,
 	)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	err = SetStateNumHint(
 		aliceCommitTx, 0, channelAlice.stateHintObfuscator,
 	)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	err = SetStateNumHint(
 		bobCommitTx, 0, channelAlice.stateHintObfuscator,
 	)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	if err := channelAlice.channelState.FullSync(); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	if err := channelBob.channelState.FullSync(); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	cleanUpFunc := func() {
@@ -351,14 +357,97 @@ func CreateTestChannels() (*LightningChannel, *LightningChannel, func(), error) 
 		channelBob.Stop()
 	}
 
+	restore := func() (*LightningChannel, *LightningChannel, error) {
+		aliceKeyPub := aliceKeys[0].PubKey()
+		aliceStoredChannels, err := dbAlice.FetchOpenChannels(aliceKeyPub)
+		switch err {
+		case nil:
+		case bolt.ErrDatabaseNotOpen:
+			dbAlice, err = channeldb.Open(dbAlice.Path())
+			if err != nil {
+				return nil, nil, fmt.Errorf("unable to reopen alice "+
+					"db: %v", err)
+			}
+
+			aliceStoredChannels, err = dbAlice.FetchOpenChannels(aliceKeyPub)
+			if err != nil {
+				return nil, nil, fmt.Errorf("unable to fetch alice "+
+					"channel: %v", err)
+			}
+		default:
+			return nil, nil, fmt.Errorf("unable to fetch alice channel: "+
+				"%v", err)
+		}
+
+		var aliceStoredChannel *channeldb.OpenChannel
+		for _, channel := range aliceStoredChannels {
+			if channel.FundingOutpoint.String() == prevOut.String() {
+				aliceStoredChannel = channel
+				break
+			}
+		}
+
+		if aliceStoredChannel == nil {
+			return nil, nil, errors.New("unable to find stored alice channel")
+		}
+
+		newAliceChannel, err := NewLightningChannel(aliceSigner,
+			nil, aliceStoredChannel)
+		if err != nil {
+			return nil, nil, fmt.Errorf("unable to create new channel: %v",
+				err)
+		}
+
+		bobKeyPub := bobKeys[0].PubKey()
+		bobStoredChannels, err := dbBob.FetchOpenChannels(bobKeyPub)
+		switch err {
+		case nil:
+		case bolt.ErrDatabaseNotOpen:
+			dbBob, err = channeldb.Open(dbBob.Path())
+			if err != nil {
+				return nil, nil, fmt.Errorf("unable to reopen bob "+
+					"db: %v", err)
+			}
+
+			bobStoredChannels, err = dbBob.FetchOpenChannels(bobKeyPub)
+			if err != nil {
+				return nil, nil, fmt.Errorf("unable to fetch bob "+
+					"channel: %v", err)
+			}
+		default:
+			return nil, nil, fmt.Errorf("unable to fetch bob channel: "+
+				"%v", err)
+		}
+
+		var bobStoredChannel *channeldb.OpenChannel
+		for _, channel := range bobStoredChannels {
+			if channel.FundingOutpoint.String() == prevOut.String() {
+				bobStoredChannel = channel
+				break
+			}
+		}
+
+		if bobStoredChannel == nil {
+			return nil, nil, errors.New("unable to find stored bob channel")
+		}
+
+		newBobChannel, err := NewLightningChannel(bobSigner,
+			nil, bobStoredChannel)
+		if err != nil {
+			return nil, nil, fmt.Errorf("unable to create new channel: %v",
+				err)
+		}
+		return newAliceChannel, newBobChannel, nil
+	}
+
 	// Now that the channel are open, simulate the start of a session by
 	// having Alice and Bob extend their revocation windows to each other.
 	err = initRevocationWindows(channelAlice, channelBob)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
-	return channelAlice, channelBob, cleanUpFunc, nil
+	return channelAlice, channelBob, cleanUpFunc, restore, nil
 }
 
 // initRevocationWindows simulates a new channel being opened within the p2p
