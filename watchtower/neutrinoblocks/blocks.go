@@ -41,6 +41,8 @@ func (b *Blocks) Start() error {
 		return nil
 	}
 
+	b.chainService.Start()
+
 	var err error
 	b.chainNotifier, err = neutrinonotify.New(b.chainService)
 	if err != nil {
@@ -60,6 +62,9 @@ func (b *Blocks) Stop() error {
 	if !atomic.CompareAndSwapInt32(&b.shutdown, 0, 1) {
 		return nil
 	}
+
+	b.chainNotifier.Stop()
+	b.chainService.Stop()
 
 	close(b.quit)
 	b.wg.Wait()

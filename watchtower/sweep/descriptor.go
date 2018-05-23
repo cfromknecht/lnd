@@ -8,7 +8,12 @@ import (
 	"errors"
 	"io"
 
+	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/roasbeef/btcd/btcec"
+	"github.com/roasbeef/btcd/txscript"
+	"github.com/roasbeef/btcd/wire"
+	"github.com/roasbeef/btcutil"
 )
 
 type BlobVersion uint16
@@ -35,10 +40,35 @@ type Descriptor struct {
 	Params StaticScriptParams
 }
 
+func (d *Descriptor) CommitToLocalScript() ([]byte, error) {
+	revocationPubKey, err := btcec.ParsePubKey(
+		d.Params.RevocationPubKey[:], btcec.S256(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	localDelayedPubKey, err := btcec.ParsePubKey(
+		d.Params.LocalDelayPubKey[:], btcec.S256(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return lnwallet.CommitScriptToSelf(
+		d.Params.CSVDelay, localDelayedPubKey, revocationPubKey,
+	)
+}
+
+func (d *Descriptor) CommitP2WKHScript() []byte {
+	p2wkh160 := btcutil.Hash160(d.Params.P2WKHPubKey[:])
+	return append([]byte{0}, p2wkh160...)
+}
+
 type StaticScriptParams struct {
 	RevocationPubKey PubKey
 	LocalDelayPubKey PubKey
-	CSVDelay         uint64
+	CSVDelay         uint32
 
 	P2WKHPubKey      *PubKey
 	RemoteHtlcPubKey *PubKey
@@ -106,30 +136,61 @@ func (p *StaticScriptParams) DecodeHtlcPubkeys(r io.Reader) error {
 	return err
 }
 
-type SweepableOutput interface {
-	BuildWitness(*StaticScriptParams) ([]byte, error)
+type Input interface {
+	Amount() btcutil.Amount
+	OutPoint() wire.OutPoint
+	BuildWitness() wire.TxWitness
 }
 
-type ToLocalOutput struct {
+type ToLocalInput struct {
+	Value         btcutil.Amount
+	PrevOutPoint  wire.OutPoint
+	OutputScript  []byte
 	RevocationSig lnwire.Sig
 }
 
-func (o *ToLocalOutput) BuildWitness(params *StaticScriptParams) ([]byte, error) {
-	// TODO(conner): build witness
-	return nil, nil
+func (o *ToLocalInput) OutPoint() wire.OutPoint {
+	return o.PrevOutPoint
 }
 
-type P2WKHOutput struct {
-	P2WKHSig lnwire.Sig
+func (o *ToLocalInput) Amount() btcutil.Amount {
+	return o.Value
 }
 
-func (o *P2WKHOutput) BuildWitness(params *StaticScriptParams) ([]byte, error) {
-	// TODO(conner): build witness
-	return nil, nil
+func (o *ToLocalInput) BuildWitness() wire.TxWitness {
+	witnessStack := wire.TxWitness(make([][]byte, 3))
+	witnessStack[0] = append(o.RevocationSig[:], byte(txscript.SigHashAll))
+	witnessStack[1] = []byte{1}
+	witnessStack[2] = o.OutputScript
+
+	return witnessStack
 }
 
-var _ SweepableOutput = (*ToLocalOutput)(nil)
-var _ SweepableOutput = (*P2WKHOutput)(nil)
+type P2WKHInput struct {
+	Value        btcutil.Amount
+	PrevOutPoint wire.OutPoint
+	OutputScript []byte
+	Sig          lnwire.Sig
+}
+
+func (o *P2WKHInput) Amount() btcutil.Amount {
+	return o.Value
+}
+
+func (o *P2WKHInput) OutPoint() wire.OutPoint {
+	return o.PrevOutPoint
+}
+
+func (o *P2WKHInput) BuildWitness() wire.TxWitness {
+	witnessStack := wire.TxWitness(make([][]byte, 2))
+	witnessStack[0] = append(o.Sig[:], byte(txscript.SigHashAll))
+	witnessStack[1] = o.OutputScript
+
+	return witnessStack
+}
+
+var _ Input = (*ToLocalInput)(nil)
+var _ Input = (*P2WKHInput)(nil)
 
 func DescriptorFromBlob(blob, key []byte, version uint16) (*Descriptor, error) {
 	block, err := aes.NewCipher(key)

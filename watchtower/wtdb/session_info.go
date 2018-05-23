@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/lightningnetwork/lnd/lnwallet"
+	"github.com/roasbeef/btcutil"
 )
 
 var (
@@ -13,6 +14,7 @@ var (
 	ErrLastAppliedReversion = errors.New("update last applied must be non-decreasing")
 	ErrSeqNumAlreadyApplied = errors.New("update sequence number has already been applied")
 	ErrSessionExpired       = errors.New("all session updates have been consumed")
+	ErrFeeExceedsInputs     = errors.New("sweep fee exceeds input values")
 )
 
 type SessionInfo struct {
@@ -31,10 +33,22 @@ type SessionInfo struct {
 	SweepAddress  []byte
 }
 
-func (s *SessionInfo) ComputeSweepOutputs(totalAmt int64,
-	vSize int64) (int64, int64, error) {
+func (s *SessionInfo) ComputeSweepOutputs(totalAmt btcutil.Amount,
+	txVSize int64) (btcutil.Amount, btcutil.Amount, error) {
 
-	rewardAmt := (totalAmt*int64(s.RewardRate) + 999) / 1000
+	txFee := s.SweepFeeRate.FeeForVSize(txVSize)
+	if txFee > totalAmt {
+		return 0, 0, ErrFeeExceedsInputs
+	}
+
+	totalAmt -= txFee
+
+	rewardAmt := (totalAmt*btcutil.Amount(s.RewardRate) + 999) / 1000
+	sweepAmt := totalAmt - rewardAmt
+
+	// TODO(conner): check dustiness
+
+	return sweepAmt, rewardAmt, nil
 }
 
 func (s *SessionInfo) AcceptUpdateSequence(seqNum, lastApplied uint16) error {

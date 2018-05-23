@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/lightningnetwork/lnd/brontide"
-	"github.com/lightningnetwork/lnd/watchtower/lookout"
 	"github.com/lightningnetwork/lnd/watchtower/wtdb"
 	"github.com/lightningnetwork/lnd/watchtower/wtwire"
 	"github.com/roasbeef/btcd/btcec"
@@ -53,7 +52,6 @@ type Config struct {
 	ListenAddrs []string
 	DB          *wtdb.DB
 	NodePrivKey *btcec.PrivateKey
-	Watcher     *lookout.Lookout
 	NewAddress  func() (btcutil.Address, error)
 }
 
@@ -91,11 +89,6 @@ func (s *Server) Start() error {
 		return nil
 	}
 
-	err := s.cfg.Watcher.Start()
-	if err != nil {
-		return err
-	}
-
 	s.connMgr.Start()
 
 	return nil
@@ -107,7 +100,6 @@ func (s *Server) Stop() error {
 		return nil
 	}
 
-	s.cfg.Watcher.Stop()
 	s.connMgr.Stop()
 
 	close(s.quit)
