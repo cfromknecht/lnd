@@ -6081,3 +6081,15 @@ func (lc *LightningChannel) RemoteCommitHeight() uint64 {
 
 	return lc.channelState.RemoteCommitment.CommitHeight
 }
+
+// RemoteBreachState returns the current remote commitment height and remote
+// txid, such that an outside subsystem can generate a BreachRetribution.
+func (lc *LightningChannel) RemoteBreachState() (uint64, *wire.MsgTx) {
+	lc.RLock()
+	defer lc.RUnlock()
+
+	remoteCommitHeight := lc.channelState.RemoteCommitment.CommitHeight
+	remoteCommitTx := lc.channelState.RemoteCommitment.CommitTx
+
+	return remoteCommitHeight, remoteCommitTx
+}
