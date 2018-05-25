@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -13,6 +14,8 @@ import (
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/watchtower/config"
+	"github.com/lightningnetwork/lnd/watchtower/sweep"
+	"github.com/lightningnetwork/lnd/watchtower/wtdb"
 	"github.com/lightningnetwork/lnd/watchtower/wtwire"
 	"github.com/roasbeef/btcd/btcec"
 	"github.com/roasbeef/btcd/chaincfg/chainhash"
@@ -59,15 +62,15 @@ type towerConfig struct {
 // chanInfo contains the permanent parameters of a channel, necessary
 // to be able to construct commitment and penalty transactions on each
 // state update.
-type chanInfo struct {
+type ChanDescriptor struct {
 	// btcutil.Amount instead?
 	feeRate      uint64
 	outputScript []byte
 
-	localChanCfg        *channeldb.ChannelConfig
-	remoteChanCfg       *channeldb.ChannelConfig
-	fundingTxIn         *wire.TxIn
-	stateHintObfuscator [lnwallet.StateHintSize]byte
+	LocalChanCfg        *channeldb.ChannelConfig
+	RemoteChanCfg       *channeldb.ChannelConfig
+	FundingTxIn         *wire.TxIn
+	StateHintObfuscator [lnwallet.StateHintSize]byte
 }
 
 // watchSession is a struct holding all necessary info needed for one
@@ -97,6 +100,14 @@ type watchSession struct {
 	signalPending chan struct{}
 }
 
+type Config struct {
+	Version           uint16
+	UpdatesPerSession uint16
+	NumTowers         uint16
+	RewardRate        uint32
+	SweepFeeRate      lnwallet.SatPerVByte
+}
+
 // Client is a module that takes care of finding and communicating with
 // watchtowers. For each channel state update given to the Client, it
 // wil distribute this state to a set of watchers, that will be able
@@ -109,11 +120,10 @@ type Client struct {
 
 	// identityPriv is used for the brontide connection to the
 	// watchtowers.
+	// TODO(conner): replace with rotating keys
 	identityPriv *btcec.PrivateKey
 
-	// <shortChanID>:[]session
-	actSesMtx      sync.RWMutex
-	activeSessions map[uint64][]*watchSession
+	sessions SessionManager
 
 	wg   sync.WaitGroup
 	quit chan struct{}
@@ -138,7 +148,7 @@ func (c *Client) Start() error {
 		return nil
 	}
 
-	return nil
+	return c.initSessions(c.cfg.NumTowers)
 }
 
 // Stop stops this Client.
@@ -213,6 +223,13 @@ func (c *Client) WatchChannel(shortChanID uint64, fundingTxIn *wire.TxIn,
 		}()
 	}
 	return nil
+}
+
+func (c *Client) Backup(state *RevokedState) {
+	update := &wtwire.StateUpdate{
+		SeqNum:      info.SeqNum,
+		LastApplied: info.LastApplied,
+	}
 }
 
 // QueueNewState will add a new channel state to the pipeline of states
@@ -331,8 +348,7 @@ FindTower:
 }
 
 func (c *Client) connect(tower *towerConfig) (*brontide.Conn, error) {
-
-	// TODO: use new public key for each connection.
+	// TODO(conner): use new public key for each connection.
 
 	// Must establish connection before we can continue.
 	conn, err := brontide.Dial(c.identityPriv, tower.addr)
@@ -350,7 +366,7 @@ func (c *Client) handshake(conn *brontide.Conn, s *watchSession) error {
 		OutputReward: s.towerReward,
 	}
 
-	if err := sendMessage(req, conn); err != nil {
+	if err := sendMessage(conn, req); err != nil {
 		return err
 	}
 
@@ -382,7 +398,7 @@ func (c *Client) handshake(conn *brontide.Conn, s *watchSession) error {
 	return nil
 }
 
-func sendMessage(msg wtwire.Message, conn *brontide.Conn) error {
+func sendMessage(conn *brontide.Conn, msg wtwire.Message) error {
 	var b bytes.Buffer
 	_, err := wtwire.WriteMessage(&b, msg, 0)
 	if err != nil {
@@ -479,8 +495,9 @@ func assembleCommitment(s *watchSession, rev *RevokedCommitment) (*wire.MsgTx, e
 
 	// With the commitment point generated, we can now generate the four
 	// keys we'll need to reconstruct the commitment state,
-	keyRing := lnwallet.DeriveCommitmentKeys(commitmentPoint, false,
-		s.info.localChanCfg, s.info.remoteChanCfg)
+	keyRing := lnwallet.DeriveCommitmentKeys(
+		commitmentPoint, false, s.info.localChanCfg, s.info.remoteChanCfg,
+	)
 
 	ourBalance := rev.LocalBalance
 	theirBalance := rev.RemoteBalance
@@ -601,7 +618,6 @@ func (c *Client) signState(s *watchSession, rev *RevokedCommitment) (*btcec.Sign
 }
 
 func (c *Client) newWatchSessions(shortChanID uint64, info *chanInfo) ([]*watchSession, error) {
-
 	// Try to find towers ready to watch this channel.
 	numTowers := defaultNumWatchers
 	twrs, err := c.fetchTowers(numTowers)
@@ -639,15 +655,231 @@ func (c *Client) fetchTowers(num int) ([]*towerConfig, error) {
 
 	// TODO: random dns?
 	for _, addr := range defaultTowers {
+		if len(twrs) == num {
+			break
+		}
+
 		twr := &towerConfig{
 			addr: addr,
 		}
 		twrs = append(twrs, twr)
 	}
 
-	if len(twrs) < num {
-		num = len(twrs)
+	return twrs, nil
+}
+
+type TowerCandidateIterator interface {
+	Next() (*towerConfig, error)
+}
+
+// TODO(conner): implement db backed candidate iterator
+type towerListIterator struct {
+	curCandidate int
+	candidates   []*towerListIterator
+}
+
+func NewTowerListIterator(candidates []*towerConfig) *towerListIterator {
+	return &towerListIterator{
+		candidates: candidates,
+	}
+}
+
+var ErrTowerCandidatesExhausted = errors.New("unable to find enough watchtowers")
+
+func (t *towerListIterator) Next() (*towerConfig, error) {
+	if t.curCandidate >= len(t.candidates) {
+		return nil, ErrTowerCandidatesExhausted
 	}
 
-	return twrs[:num], nil
+	tower := t.candidates[t.curCandidate]
+	t.curCandidate++
+
+	return tower, nil
+}
+
+type SessionManager interface {
+	AddSession(*ClientSessionInfo) error
+	FindAvailable() (*ClientSessionInfo, error)
+}
+
+// TODO(conner): make persistent
+type sessionManager struct {
+	mu       sync.Mutex
+	sessions map[*lnwire.NetAddress]*ClientSessionInfo
+}
+
+func newSessionManager() *sessionManager {
+	return &sessionManager{
+		sessions: make(map[*lnwire.NetAddress]*ClientSessionInfo),
+	}
+}
+
+func (m *sessionManager) AddSession(session *ClientSessionInfo) error {
+	m.mu.Lock()
+	m.sessions[session.Addr] = session
+	m.mu.Unlock()
+
+	return nil
+}
+
+var ErrSessionsExhausted = errors.New("unable to find available session")
+
+func (m *sessionManager) FindAvailable() (*ClientSessionInfo, error) {
+	m.mu.RLock()
+	for _, session := range m.sessions {
+		m.mu.RUnlock()
+		return session, nil
+	}
+	m.mu.RUnlock()
+
+	return ErrSessionsExhausted
+}
+
+func (c *Client) initSessions(numTowers int) error {
+	if numTowers == 0 {
+		return nil
+	}
+
+	// TODO(conner): check num active sessions
+
+	twrs, err := c.fetchTowers(numTowers)
+	if err != nil {
+		return err
+	}
+
+	candidates := NewTowerListIterator(twrs)
+
+	dispatcher := make(chan struct{}, numTowers)
+	for i := 0; i < numTowers; i++ {
+		dispatcher <- struct{}{}
+	}
+
+	sessions := make(chan struct{})
+
+	var numComplete int
+	for {
+		select {
+		case <-dispatcher:
+			tower, err := candidates.Next()
+			if err != nil {
+				return err
+			}
+
+			c.wg.Add(1)
+			go c.initSession(tower, dispatcher, sessions)
+
+		case sessionInfo := <-sessions:
+			// TODO(conner): write info to client session db
+			err := c.sessions.AddSession(sessionInfo)
+			if err != nil {
+				return err
+			}
+
+			numComplete++
+			if numComplete >= numTowers {
+				return nil
+			}
+
+		case <-c.quit:
+			return ErrWtClientShuttingDown
+		}
+	}
+}
+
+type ClientSessionInfo struct {
+	Addr        *lnwire.NetAddress
+	SessionInfo *wtdb.SessionInfo
+}
+
+func (c *Client) initSession(tower *towerConfig, dispatcher chan struct{},
+	sessions chan *wtdb.SessionInfo) {
+
+	defer c.wg.Done()
+
+	var needRetry = true
+	defer func() {
+		if needRetry {
+			select {
+			case dispatcher <- struct{}{}:
+			case <-quit:
+			}
+		}
+	}()
+
+	conn, err := c.connect(tower)
+	if err != nil {
+		fmt.Printf("unable to connect to watchtower=%v: %v\n",
+			tower.addr, err)
+		return
+	}
+
+	init := &wtwire.SessionInit{
+		Version:      sweep.BlobVersion0,
+		MaxUpdates:   c.cfg.UpdatesPerSession,
+		RewardRate:   c.cfg.RewardRate,
+		SweepFeeRate: c.cfg.SweepFeeRate,
+	}
+
+	sessionID := wtdb.NewSessionIDFromPubKey(c.identityPriv.PubKey())
+
+	// TODO(conner): set sweep address
+
+	info := &wtdb.SessionInfo{
+		ID:           sessionID,
+		Version:      sweep.BlobVersion0,
+		MaxUpdates:   c.cfg.UpdatesPerSession,
+		RewardRate:   c.cfg.RewardRate,
+		SweepFeeRate: c.cfg.SweepFeeRate,
+	}
+
+	err = conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
+	if err != nil {
+		fmt.Printf("unable to set write deadline: %v\n", err)
+		return
+	}
+
+	err = sendMessage(conn, init)
+	if err != nil {
+		fmt.Printf("unable to send init message to watchtower=%v: %v\n",
+			tower.addr, err)
+		return
+	}
+
+	err = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	if err != nil {
+		fmt.Printf("unable to set read deadline: %v\n", err)
+		return
+	}
+
+	// Wait for response.
+	rawMsg, err := conn.ReadNextMessage()
+	if err != nil {
+		return
+
+	}
+
+	msgReader := bytes.NewReader(rawMsg)
+	msg, err := wtwire.ReadMessage(msgReader, 0)
+	if err != nil {
+		return
+	}
+
+	switch resp := msg.(type) {
+	case *wtwire.SessionAccept:
+		info.RewardAddress = resp.RewardAddress
+
+		needRetry = false
+
+		select {
+		case sessions <- &ClientSessionInfo{
+			Addr:        tower.addr,
+			SessionInfo: info,
+		}:
+		case <-quit:
+		}
+
+	default:
+		fmt.Printf("received malformed response to session init")
+		return
+	}
 }

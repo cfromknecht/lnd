@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lightningnetwork/lnd/brontide"
+	"github.com/lightningnetwork/lnd/watchtower/config"
 	"github.com/lightningnetwork/lnd/watchtower/wtdb"
 	"github.com/lightningnetwork/lnd/watchtower/wtwire"
 	"github.com/roasbeef/btcd/btcec"
@@ -56,9 +57,9 @@ type Config struct {
 }
 
 func New(cfg *Config) (*Server, error) {
+	var err error
 	listeners := make([]net.Listener, len(cfg.ListenAddrs))
 	for i, addr := range cfg.ListenAddrs {
-		var err error
 		listeners[i], err = brontide.NewListener(cfg.NodePrivKey, addr)
 		if err != nil {
 			return nil, err
@@ -70,15 +71,14 @@ func New(cfg *Config) (*Server, error) {
 		quit: make(chan struct{}),
 	}
 
-	cmgr, err := connmgr.New(&connmgr.Config{
+	s.connMgr, err = connmgr.New(&connmgr.Config{
 		Listeners: listeners,
 		OnAccept:  s.InboundPeerConnected,
+		Dial:      config.NoiseDial(cfg.NodePrivKey),
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	s.connMgr = cmgr
 
 	return s, nil
 }
@@ -118,30 +118,6 @@ func (s *Server) InboundPeerConnected(c net.Conn) {
 
 	s.wg.Add(1)
 	go s.handleIncomingConnection(conn)
-}
-
-func (s *Server) addPeer(id *wtdb.SessionID, conn *brontide.Conn) error {
-	s.peerMtx.Lock()
-	conn, ok := s.peers[*id]
-	if ok {
-		s.peerMtx.Unlock()
-		return ErrPeerAlreadyConnected
-	}
-	s.peers[*id] = conn
-	s.peerMtx.Unlock()
-
-	return nil
-}
-
-func (s *Server) removePeer(id *wtdb.SessionID) {
-	s.peerMtx.Lock()
-	conn, ok := s.peers[*id]
-	delete(s.peers, *id)
-	s.peerMtx.Unlock()
-
-	if ok {
-		conn.Close()
-	}
 }
 
 func (s *Server) handleIncomingConnection(conn *brontide.Conn) {
@@ -317,5 +293,29 @@ func failConn(conn *brontide.Conn, id *wtdb.SessionID, code uint16) error {
 	return &ConnFailure{
 		ID:   *id,
 		Code: code,
+	}
+}
+
+func (s *Server) addPeer(id *wtdb.SessionID, conn *brontide.Conn) error {
+	s.peerMtx.Lock()
+	conn, ok := s.peers[*id]
+	if ok {
+		s.peerMtx.Unlock()
+		return ErrPeerAlreadyConnected
+	}
+	s.peers[*id] = conn
+	s.peerMtx.Unlock()
+
+	return nil
+}
+
+func (s *Server) removePeer(id *wtdb.SessionID) {
+	s.peerMtx.Lock()
+	conn, ok := s.peers[*id]
+	delete(s.peers, *id)
+	s.peerMtx.Unlock()
+
+	if ok {
+		conn.Close()
 	}
 }

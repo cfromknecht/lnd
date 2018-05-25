@@ -6,7 +6,7 @@ import (
 	"github.com/roasbeef/btcd/chaincfg/chainhash"
 )
 
-const BreachKeySize = 16
+const BreachKeySize = 32
 
 type BreachKey [BreachKeySize]byte
 

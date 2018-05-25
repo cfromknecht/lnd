@@ -3,6 +3,7 @@ package watchtower
 import (
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"time"
@@ -58,9 +59,16 @@ func (w *WatchTower) Start() error {
 	}
 	fmt.Println("opened db", w.txdb)
 
+	neutrinoDbPath := filepath.Join(w.cfg.DataDir, "chain")
+
+	// Ensure that the neutrino db path exists.
+	if err := os.MkdirAll(neutrinoDbPath, 0700); err != nil {
+		return err
+	}
+
 	// First we'll open the database file for neutrino, creating
 	// the database if needed.
-	dbName := filepath.Join(w.cfg.DataDir, "neutrino.db")
+	dbName := filepath.Join(neutrinoDbPath, "neutrino.db")
 	nodeDatabase, err := walletdb.Create("bdb", dbName)
 	if err != nil {
 		w.txdb.Close()
@@ -71,7 +79,7 @@ func (w *WatchTower) Start() error {
 	// neutrino light client. We pass in relevant configuration
 	// parameters required.
 	neutrinoCfg := neutrino.Config{
-		DataDir:      w.cfg.DataDir,
+		DataDir:      neutrinoDbPath,
 		Database:     nodeDatabase,
 		ChainParams:  *w.cfg.Bitcoin.Params,
 		AddPeers:     w.cfg.NeutrinoMode.AddPeers,

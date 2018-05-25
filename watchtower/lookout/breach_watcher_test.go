@@ -50,6 +50,10 @@ func makeArray64(i uint64) [64]byte {
 	return arr
 }
 
+func makeAddr() []byte {
+	return make([]byte, 32)
+}
+
 func TestMatchingTransactions(t *testing.T) {
 	testDir, err := ioutil.TempDir("", "testcreate")
 	if err != nil {
@@ -76,8 +80,10 @@ func TestMatchingTransactions(t *testing.T) {
 	}
 
 	sessionInfo1 := &wtdb.SessionInfo{
-		ID:         makeArray33(1),
-		MaxUpdates: 10,
+		ID:            makeArray33(1),
+		MaxUpdates:    10,
+		SweepAddress:  makeAddr(),
+		RewardAddress: makeAddr(),
 	}
 	err = db.InsertSessionInfo(sessionInfo1)
 	if err != nil {
@@ -85,8 +91,10 @@ func TestMatchingTransactions(t *testing.T) {
 	}
 
 	sessionInfo2 := &wtdb.SessionInfo{
-		ID:         makeArray33(2),
-		MaxUpdates: 10,
+		ID:            makeArray33(2),
+		MaxUpdates:    10,
+		SweepAddress:  makeAddr(),
+		RewardAddress: makeAddr(),
 	}
 	err = db.InsertSessionInfo(sessionInfo2)
 	if err != nil {

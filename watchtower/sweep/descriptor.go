@@ -2,11 +2,11 @@ package sweep
 
 import (
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
 	"encoding/binary"
 	"errors"
 	"io"
+
+	"golang.org/x/crypto/chacha20poly1305"
 
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -193,19 +193,15 @@ var _ Input = (*ToLocalInput)(nil)
 var _ Input = (*P2WKHInput)(nil)
 
 func DescriptorFromBlob(blob, key []byte, version uint16) (*Descriptor, error) {
-	block, err := aes.NewCipher(key)
+	cipher, err := chacha20poly1305.New(key)
 	if err != nil {
 		return nil, err
 	}
 
-	aesgcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
+	var nonce [12]byte
+	plaintext := make([]byte, len(blob)-16)
 
-	nonce := make([]byte, aesgcm.NonceSize())
-
-	plaintext, err := aesgcm.Open(nil, nonce, blob, nil)
+	plaintext, err = cipher.Open(plaintext[:0], nonce[:], blob, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -220,27 +216,22 @@ func DescriptorFromBlob(blob, key []byte, version uint16) (*Descriptor, error) {
 }
 
 func (d *Descriptor) Encrypt(key []byte, ver uint16) ([]byte, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-
-	aesgcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
 	var b bytes.Buffer
-	err = d.EncodePlaintextBlob(&b, ver)
+	err := d.EncodePlaintextBlob(&b, ver)
 	if err != nil {
 		return nil, err
 	}
 
-	nonce := make([]byte, aesgcm.NonceSize())
+	var nonce [12]byte
+	plaintext := b.Bytes()
+	ciphertext := make([]byte, len(plaintext)+16)
 
-	ctxt := aesgcm.Seal(nil, nonce, b.Bytes(), nil)
+	cipher, err := chacha20poly1305.New(key)
+	if err != nil {
+		return nil, err
+	}
 
-	return ctxt, nil
+	return cipher.Seal(ciphertext[:0], nonce[:], plaintext, nil), nil
 }
 
 func (d *Descriptor) EncodePlaintextBlob(w io.Writer, ver uint16) error {

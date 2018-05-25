@@ -66,8 +66,6 @@ func (c *Lookout) watchBlocks() {
 	for {
 		select {
 		case block := <-c.cfg.NewBlocks:
-			fmt.Println("new block;", block)
-
 			c.wg.Add(1)
 			go c.processNewBlock(block)
 
@@ -86,7 +84,6 @@ func (c *Lookout) processNewBlock(block *wire.MsgBlock) {
 	txHints := make([]wtdb.BreachHint, 0, numTxnsInBlock)
 
 	for _, tx := range block.Transactions {
-		fmt.Println("tx:", tx.TxHash())
 		hash := tx.TxHash()
 		hint := wtdb.NewBreachHintFromHash(&hash)
 

@@ -21,7 +21,7 @@ import (
 
 // Name watchtower F: wtf?
 const (
-	DefaultServerPort     = 9777
+	DefaultServerPort     = 9911
 	defaultConfigFilename = "watchtower.conf"
 	defaultDataDirname    = "data"
 	defaultLogLevel       = "info"
@@ -29,7 +29,7 @@ const (
 	defaultLogFilename    = "watchtower.log"
 	defaultRPCPort        = 10009
 	defaultRESTPort       = 8080
-	defaultPeerPort       = 9735
+	defaultPeerPort       = 9911
 )
 
 var (

@@ -3,6 +3,7 @@ package wtdb
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/lightningnetwork/lnd/lnwallet"
@@ -93,10 +94,12 @@ func (s *SessionInfo) Encode(w io.Writer) error {
 	if err := binary.Write(w, byteOrder, s.SweepFeeRate); err != nil {
 		return err
 	}
+	fmt.Printf("reward address length: %v\n", len(s.RewardAddress))
 	if _, err := w.Write(s.RewardAddress); err != nil {
 		return err
 	}
 
+	fmt.Printf("sweep address length: %v\n", len(s.SweepAddress))
 	_, err := w.Write(s.SweepAddress)
 	return err
 }
@@ -121,12 +124,12 @@ func (s *SessionInfo) Decode(r io.Reader) error {
 		return err
 	}
 
-	s.RewardAddress = make([]byte, 64)
+	s.RewardAddress = make([]byte, 32)
 	if _, err := r.Read(s.RewardAddress); err != nil {
 		return err
 	}
 
-	s.SweepAddress = make([]byte, 64)
+	s.SweepAddress = make([]byte, 32)
 	_, err := r.Read(s.SweepAddress)
 	return err
 }
