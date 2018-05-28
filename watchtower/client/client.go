@@ -41,6 +41,8 @@ var (
 			Address:     defaultServerAddress,
 		},
 	}
+
+	ErrNotWatchingChannel = errors.New("not watching channel")
 )
 
 // RevokedCommitment constains the information needed by the client for every
@@ -106,6 +108,9 @@ type Config struct {
 	NumTowers         uint16
 	RewardRate        uint32
 	SweepFeeRate      lnwallet.SatPerVByte
+	DB                *wtdb.ClientDB
+	Signer            lnwallet.Signer
+	IdentityPrivKey   *btcec.PrivateKey
 }
 
 // Client is a module that takes care of finding and communicating with
@@ -130,10 +135,9 @@ type Client struct {
 }
 
 // New returns a new Client.
-func New(privKey *btcec.PrivateKey, signer lnwallet.Signer) (*Client, error) {
+func New(cfg *Config) (*Client, error) {
 	c := &Client{
-		identityPriv:   privKey,
-		signer:         signer,
+		cfg:            cfg,
 		activeSessions: make(map[uint64][]*watchSession),
 		quit:           make(chan struct{}),
 	}
@@ -225,11 +229,65 @@ func (c *Client) WatchChannel(shortChanID uint64, fundingTxIn *wire.TxIn,
 	return nil
 }
 
-func (c *Client) Backup(state *RevokedState) {
-	update := &wtwire.StateUpdate{
-		SeqNum:      info.SeqNum,
-		LastApplied: info.LastApplied,
+type ChannelManager interface {
+	WatchChannel(lnwire.ChannelID, *channeldb.OpenChannel) error
+	LookupChannel(lnwire.ChannelID) (*channeldb.OpenChannel, error)
+}
+
+type channelManager struct {
+	mu       sync.Mutex
+	channels map[lnwire.ChannelID]*channeldb.OpenChannel
+}
+
+func (m *channelManager) WatchChannel(chanID lnwire.ChannelID,
+	channelState *channeldb.OpenChannel) error {
+
+	m.mu.Lock()
+	m.channels[chanID] = channelState
+	m.mu.Unlock()
+
+	return nil
+}
+
+func (m *channelManager) LookupChannel(
+	chanID lnwire.ChannelID) (*channeldb.OpenChannel, error) {
+
+	m.mu.Lock()
+	channelState, ok := m.channels[chanID]
+	m.mu.Unlock()
+
+	if !ok {
+		return nil, ErrNotWatchingChannel
 	}
+
+	return channelState, nil
+}
+
+func (c *Client) RegisterChannel(channelState *channeldb.OpenChannel) error {
+	chanID := lnwire.NewChanIDFromOutPoint(channelState.FundingOutpoint)
+	return c.channels.WatchChannel(chanID, channelState)
+}
+
+func (c *Client) Backup(state *wtdb.RevokedState) error {
+	err := c.cfg.DB.BeginStateBackup(state)
+	if err != nil {
+		return err
+	}
+
+	channelState, err := c.channels.LookupChannel(state.ChanID)
+	if err != nil {
+		return err
+	}
+
+	fundHeight := channelState.ShortChanID.BlockHeight
+	lnwallet.NewBreachRetribution(
+		channelState, state.CommitHeight, state.CommitTxID, fundHeight,
+	)
+
+	// TODO(conner): queue for watchtower delivery
+	// TODO(conner): add subscription event?
+
+	return nil
 }
 
 // QueueNewState will add a new channel state to the pipeline of states

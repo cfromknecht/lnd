@@ -35,3 +35,11 @@ func fileExists(path string) bool {
 
 	return true
 }
+
+var errBucketNotEmpty = errors.New("bucket not empty")
+
+func isBucketEmpty(bucket *bolt.Bucket) error {
+	return bucket.ForEach(func(_, _ []byte) error {
+		return errBucketNotEmpty
+	})
+}

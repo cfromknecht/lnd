@@ -14,7 +14,9 @@ import (
 const clientDbName = "wt_client.db"
 
 var (
-	backupBucket = []byte("backup")
+	backupBucket = []byte("backups")
+
+	sessionBucket = []byte("sessions")
 
 	ErrCorruptClientDB = errors.New("watchtower client db is corrupted")
 
@@ -36,6 +38,7 @@ type RevokedState struct {
 	ChanID       lnwire.ChannelID
 	CommitHeight uint64
 	CommitTxID   chainhash.Hash
+	CommitTx     *wire.MsgTx
 	State        BackupState
 }
 
@@ -83,7 +86,12 @@ func OpenClientDB(dbPath string) (*ClientDB, error) {
 		dbPath: dbPath,
 	}
 
-	return db, db.initBuckets()
+	err = db.initBuckets()
+	if err != nil {
+		return nil, err
+	}
+
+	return db, nil
 }
 
 func (d *ClientDB) initBuckets() error {
@@ -93,8 +101,8 @@ func (d *ClientDB) initBuckets() error {
 		if err != nil {
 			return err
 		}
-
-		return nil
+		_, err = tx.CreateBucketIfNotExists(sessionBucket)
+		return err
 	})
 }
 
@@ -169,12 +177,69 @@ func (d *ClientDB) ReportBackupSuccess(state *RevokedState) error {
 }
 
 func (d *ClientDB) AckBackup(state *RevokedState) error {
+	return d.DB.Update(func(tx *bolt.Tx) error {
+		backups := tx.Bucket(backupBucket)
+		if backups == nil {
+			return ErrCorruptClientDB
+		}
 
+		return removeRevokedState(state)
+	})
+}
+
+func (d *ClientDB) ListBackups() ([]*RevokedState, error) {
+	var revokedStates []*RevokedState
+	err := d.DB.View(func(tx *bolt.Tx) error {
+		backups := tx.Bucket(backupBucket)
+		if backups == nil {
+			return ErrCorruptClientDB
+		}
+
+		var err error
+		revokedStates, err = listBackups(backups)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+
+	return revokedStates, nil
+}
+
+func listBackups(backups *bolt.Bucket) ([]*RevokedState, error) {
+	var revokedStates []*RevokedState
+	err := backups.ForEach(func(chanID, _ []byte) error {
+		chanBucket := backups.Bucket(chanID)
+		if chanBucket == nil {
+			return ErrCorruptClientDB
+		}
+
+		return chanBucket.ForEach(func(_, v []byte) error {
+			state := &RevokedState{}
+			err := state.Decode(bytes.NewReader(v))
+			if err != nil {
+				return err
+			}
+
+			revokedStates = append(revokedStates, state)
+
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return revokedStates, nil
 }
 
 func (d *ClientDB) Wipe() error {
 	return d.Update(func(tx *bolt.Tx) error {
 		err := tx.DeleteBucket(backupBucket)
+		if err != nil && err != bolt.ErrBucketNotFound {
+			return err
+		}
+		err = tx.DeleteBucket(sessionBucket)
 		if err != nil && err != bolt.ErrBucketNotFound {
 			return err
 		}
@@ -222,4 +287,29 @@ func getRevokedState(backups *bolt.Bucket, chanID lnwire.ChannelID,
 	}
 
 	return revokedState, nil
+}
+
+func removeRevokedState(backups *bolt.Bucket, state *RevokedState) error {
+	chanBucket := backups.Bucket(state.ChanID[:])
+	if chanBucket == nil {
+		return ErrRevokedStateNotFound
+	}
+
+	var commitHeightKey [8]byte
+	byteOrder.PutUint64(commitHeightKey[:], state.CommitHeight)
+
+	err := chanBucket.Delete(commitHeightKey[:])
+	if err != nil {
+		return err
+	}
+
+	err = isBucketEmpty(chanBucket)
+	switch {
+	case err == errBucketNotEmpty:
+		return nil
+	case err != nil:
+		return err
+	}
+
+	return backups.Delete(state.ChanID[:])
 }

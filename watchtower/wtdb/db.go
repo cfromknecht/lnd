@@ -42,7 +42,12 @@ func Open(dbPath string) (*DB, error) {
 		dbPath: dbPath,
 	}
 
-	return db, db.initBuckets()
+	err = db.initBuckets()
+	if err != nil {
+		return nil, err
+	}
+
+	return db, nil
 }
 
 func (d *DB) initBuckets() error {
