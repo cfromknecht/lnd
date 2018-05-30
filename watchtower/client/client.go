@@ -269,20 +269,25 @@ func (c *Client) RegisterChannel(channelState *channeldb.OpenChannel) error {
 }
 
 func (c *Client) Backup(state *wtdb.RevokedState) error {
-	err := c.cfg.DB.BeginStateBackup(state)
+	_, err := c.channels.LookupChannel(state.ChanID)
 	if err != nil {
 		return err
 	}
 
-	channelState, err := c.channels.LookupChannel(state.ChanID)
+	err = c.cfg.DB.BeginStateBackup(state)
 	if err != nil {
 		return err
 	}
+
+	return c.scheduler.ScheduleStateUpdate(state)
 
 	fundHeight := channelState.ShortChanID.BlockHeight
-	lnwallet.NewBreachRetribution(
+	breachRetribution, err := lnwallet.NewBreachRetribution(
 		channelState, state.CommitHeight, state.CommitTxID, fundHeight,
 	)
+	if err != nil {
+		return err
+	}
 
 	// TODO(conner): queue for watchtower delivery
 	// TODO(conner): add subscription event?
@@ -675,6 +680,18 @@ func (c *Client) signState(s *watchSession, rev *RevokedCommitment) (*btcec.Sign
 	return sign, &commitHash, nil
 }
 
+func (c *Client) controller() {
+	defer c.wg.Done()
+
+	for {
+		select {
+		case chanDesc := <-c.newChannels:
+
+		case <-c.quit:
+		}
+	}
+}
+
 func (c *Client) newWatchSessions(shortChanID uint64, info *chanInfo) ([]*watchSession, error) {
 	// Try to find towers ready to watch this channel.
 	numTowers := defaultNumWatchers
@@ -724,220 +741,4 @@ func (c *Client) fetchTowers(num int) ([]*towerConfig, error) {
 	}
 
 	return twrs, nil
-}
-
-type TowerCandidateIterator interface {
-	Next() (*towerConfig, error)
-}
-
-// TODO(conner): implement db backed candidate iterator
-type towerListIterator struct {
-	curCandidate int
-	candidates   []*towerListIterator
-}
-
-func NewTowerListIterator(candidates []*towerConfig) *towerListIterator {
-	return &towerListIterator{
-		candidates: candidates,
-	}
-}
-
-var ErrTowerCandidatesExhausted = errors.New("unable to find enough watchtowers")
-
-func (t *towerListIterator) Next() (*towerConfig, error) {
-	if t.curCandidate >= len(t.candidates) {
-		return nil, ErrTowerCandidatesExhausted
-	}
-
-	tower := t.candidates[t.curCandidate]
-	t.curCandidate++
-
-	return tower, nil
-}
-
-type SessionManager interface {
-	AddSession(*ClientSessionInfo) error
-	FindAvailable() (*ClientSessionInfo, error)
-}
-
-// TODO(conner): make persistent
-type sessionManager struct {
-	mu       sync.Mutex
-	sessions map[*lnwire.NetAddress]*ClientSessionInfo
-}
-
-func newSessionManager() *sessionManager {
-	return &sessionManager{
-		sessions: make(map[*lnwire.NetAddress]*ClientSessionInfo),
-	}
-}
-
-func (m *sessionManager) AddSession(session *ClientSessionInfo) error {
-	m.mu.Lock()
-	m.sessions[session.Addr] = session
-	m.mu.Unlock()
-
-	return nil
-}
-
-var ErrSessionsExhausted = errors.New("unable to find available session")
-
-func (m *sessionManager) FindAvailable() (*ClientSessionInfo, error) {
-	m.mu.RLock()
-	for _, session := range m.sessions {
-		m.mu.RUnlock()
-		return session, nil
-	}
-	m.mu.RUnlock()
-
-	return ErrSessionsExhausted
-}
-
-func (c *Client) initSessions(numTowers int) error {
-	if numTowers == 0 {
-		return nil
-	}
-
-	// TODO(conner): check num active sessions
-
-	twrs, err := c.fetchTowers(numTowers)
-	if err != nil {
-		return err
-	}
-
-	candidates := NewTowerListIterator(twrs)
-
-	dispatcher := make(chan struct{}, numTowers)
-	for i := 0; i < numTowers; i++ {
-		dispatcher <- struct{}{}
-	}
-
-	sessions := make(chan struct{})
-
-	var numComplete int
-	for {
-		select {
-		case <-dispatcher:
-			tower, err := candidates.Next()
-			if err != nil {
-				return err
-			}
-
-			c.wg.Add(1)
-			go c.initSession(tower, dispatcher, sessions)
-
-		case sessionInfo := <-sessions:
-			// TODO(conner): write info to client session db
-			err := c.sessions.AddSession(sessionInfo)
-			if err != nil {
-				return err
-			}
-
-			numComplete++
-			if numComplete >= numTowers {
-				return nil
-			}
-
-		case <-c.quit:
-			return ErrWtClientShuttingDown
-		}
-	}
-}
-
-type ClientSessionInfo struct {
-	Addr        *lnwire.NetAddress
-	SessionInfo *wtdb.SessionInfo
-}
-
-func (c *Client) initSession(tower *towerConfig, dispatcher chan struct{},
-	sessions chan *wtdb.SessionInfo) {
-
-	defer c.wg.Done()
-
-	var needRetry = true
-	defer func() {
-		if needRetry {
-			select {
-			case dispatcher <- struct{}{}:
-			case <-quit:
-			}
-		}
-	}()
-
-	conn, err := c.connect(tower)
-	if err != nil {
-		fmt.Printf("unable to connect to watchtower=%v: %v\n",
-			tower.addr, err)
-		return
-	}
-
-	init := &wtwire.SessionInit{
-		Version:      sweep.BlobVersion0,
-		MaxUpdates:   c.cfg.UpdatesPerSession,
-		RewardRate:   c.cfg.RewardRate,
-		SweepFeeRate: c.cfg.SweepFeeRate,
-	}
-
-	sessionID := wtdb.NewSessionIDFromPubKey(c.identityPriv.PubKey())
-
-	// TODO(conner): set sweep address
-
-	info := &wtdb.SessionInfo{
-		ID:           sessionID,
-		Version:      sweep.BlobVersion0,
-		MaxUpdates:   c.cfg.UpdatesPerSession,
-		RewardRate:   c.cfg.RewardRate,
-		SweepFeeRate: c.cfg.SweepFeeRate,
-	}
-
-	err = conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
-	if err != nil {
-		fmt.Printf("unable to set write deadline: %v\n", err)
-		return
-	}
-
-	err = sendMessage(conn, init)
-	if err != nil {
-		fmt.Printf("unable to send init message to watchtower=%v: %v\n",
-			tower.addr, err)
-		return
-	}
-
-	err = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
-	if err != nil {
-		fmt.Printf("unable to set read deadline: %v\n", err)
-		return
-	}
-
-	// Wait for response.
-	rawMsg, err := conn.ReadNextMessage()
-	if err != nil {
-		return
-
-	}
-
-	msgReader := bytes.NewReader(rawMsg)
-	msg, err := wtwire.ReadMessage(msgReader, 0)
-	if err != nil {
-		return
-	}
-
-	switch resp := msg.(type) {
-	case *wtwire.SessionAccept:
-		info.RewardAddress = resp.RewardAddress
-
-		needRetry = false
-
-		select {
-		case sessions <- &ClientSessionInfo{
-			Addr:        tower.addr,
-			SessionInfo: info,
-		}:
-		case <-quit:
-		}
-
-	default:
-		fmt.Printf("received malformed response to session init")
-		return
-	}
 }
