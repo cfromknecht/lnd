@@ -53,18 +53,22 @@ type sessionManager struct {
 
 	numBackups int
 
-	mu           sync.Mutex
-	sessions     map[*wtdb.SessionID]*sessionState
 	reserveState ReserveLevel
+
+	queue      *revokedStateQueue
+	negotiator SessionNegotiator
+	sessions   map[*wtdb.SessionID]*sessionState
 
 	wg   sync.WaitGroup
 	quit chan struct{}
 }
 
-func newSessionManager() *sessionManager {
+func newSessionManager(negotiator SessionNegotiator) *sessionManager {
 	return &sessionManager{
-		sessions: make(map[*lnwire.NetAddress]*ClientSessionInfo),
-		quit:     make(chan struct{}),
+		negotiator: negotiator,
+		queue:      newRevokedStateQueue(),
+		sessions:   make(map[*lnwire.NetAddress]*ClientSessionInfo),
+		quit:       make(chan struct{}),
 	}
 }
 
@@ -90,13 +94,11 @@ func (s *sessionManager) Stop() error {
 func (m *sessionManager) AddSession(session *sessionState) error {
 	sessionID := session.ID()
 
-	m.mu.Lock()
 	if _, ok := m.sessions[sessionID]; ok {
-		m.mu.Unlock()
 		return ErrSessionAlreadyActive
 	}
+
 	m.sessions[session.ID()] = session
-	m.mu.Unlock()
 
 	return nil
 }
@@ -105,12 +107,13 @@ var (
 	ErrSessionsExhausted    = errors.New("unable to find available session")
 	ErrSessionExhausted     = errors.New("session has exhausted all updates")
 	ErrSessionFull          = errors.New("unable to queue update, all updates reserved")
+	ErrLowSession           = errors.New("unable session detected as low")
 	ErrSessionAlreadyActive = errors.New("session already active")
 )
 
 func (m *sessionManager) QueueState(state *wtwire.StateUpdate) error {
 	var numScheduledBackups int
-	m.mu.Lock()
+	var haveLowSession bool
 	for id, session := range m.sessions {
 		err := session.QueueState(state)
 		switch {
@@ -122,8 +125,11 @@ func (m *sessionManager) QueueState(state *wtwire.StateUpdate) error {
 			continue
 
 		case err != nil:
-			m.mu.Unlock()
 			return err
+
+		case err == ErrLowSession:
+			haveLowSession = true
+			fallthrough
 
 		default:
 			numScheduledBackups++
@@ -133,65 +139,16 @@ func (m *sessionManager) QueueState(state *wtwire.StateUpdate) error {
 			break
 		}
 	}
-	m.mu.Unlock()
 
 	if numScheduledBackups < m.numScheduledBackups {
 		// TODO(conner): schedule remaining
 		return ErrSessionsExhausted
 	}
+	if haveLowSession {
+		return ErrLowSession
+	}
 
 	return nil
-}
-
-func (c *Client) initSessions(numTowers int) error {
-	if numTowers == 0 {
-		return nil
-	}
-
-	// TODO(conner): check num active sessions
-
-	twrs, err := c.fetchTowers(numTowers)
-	if err != nil {
-		return err
-	}
-
-	candidates := NewTowerListIterator(twrs)
-
-	dispatcher := make(chan struct{}, numTowers)
-	for i := 0; i < numTowers; i++ {
-		dispatcher <- struct{}{}
-	}
-
-	sessions := make(chan struct{})
-
-	var numComplete int
-	for {
-		select {
-		case <-dispatcher:
-			tower, err := candidates.Next()
-			if err != nil {
-				return err
-			}
-
-			c.wg.Add(1)
-			go c.initSession(tower, dispatcher, sessions)
-
-		case sessionInfo := <-sessions:
-			// TODO(conner): write info to client session db
-			err := c.sessions.AddSession(sessionInfo)
-			if err != nil {
-				return err
-			}
-
-			numComplete++
-			if numComplete >= numTowers {
-				return nil
-			}
-
-		case <-c.quit:
-			return ErrWtClientShuttingDown
-		}
-	}
 }
 
 type sessionState struct {
@@ -247,6 +204,12 @@ func (s *sessionState) QueueState(state *wtwire.StateUpdate) error {
 
 	s.numPending++
 
+	const lowThreshold = float64(0.2)
+	used := float64(s.info.LastSeqNum+s.numPending) / float64(s.MaxUpdates)
+	if used+lowThreshold >= 1.0 {
+		return ErrLowSession
+	}
+
 	return nil
 }
 
@@ -257,106 +220,6 @@ func (s *sessionState) Exhausted() bool {
 type ClientSessionInfo struct {
 	Addr        *lnwire.NetAddress
 	SessionInfo *wtdb.SessionInfo
-}
-
-func (c *Client) initSession(tower *towerConfig, dispatcher chan struct{},
-	sessions chan *sessionState) {
-
-	defer c.wg.Done()
-
-	var needRetry = true
-	defer func() {
-		if needRetry {
-			select {
-			case dispatcher <- struct{}{}:
-			case <-quit:
-			}
-		}
-	}()
-
-	conn, err := c.connect(tower)
-	if err != nil {
-		fmt.Printf("unable to connect to watchtower=%v: %v\n",
-			tower.addr, err)
-		return
-	}
-
-	// TODO(conner): add tower to known peers after successful connection
-
-	init := &wtwire.SessionInit{
-		Version:      sweep.BlobVersion0,
-		MaxUpdates:   c.cfg.UpdatesPerSession,
-		RewardRate:   c.cfg.RewardRate,
-		SweepFeeRate: c.cfg.SweepFeeRate,
-	}
-
-	sessionID := wtdb.NewSessionIDFromPubKey(c.identityPriv.PubKey())
-
-	// TODO(conner): set sweep address
-
-	info := &wtdb.SessionInfo{
-		ID:           sessionID,
-		Version:      sweep.BlobVersion0,
-		MaxUpdates:   c.cfg.UpdatesPerSession,
-		RewardRate:   c.cfg.RewardRate,
-		SweepFeeRate: c.cfg.SweepFeeRate,
-	}
-
-	// Send SessionInit message.
-	err = conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
-	if err != nil {
-		fmt.Printf("unable to set write deadline: %v\n", err)
-		return
-	}
-
-	err = sendMessage(conn, init)
-	if err != nil {
-		fmt.Printf("unable to send init message to watchtower=%v: %v\n",
-			tower.addr, err)
-		return
-	}
-
-	// Receive SessionAccept/SessionReject message.
-	err = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
-	if err != nil {
-		fmt.Printf("unable to set read deadline: %v\n", err)
-		return
-	}
-
-	// Wait for response.
-	rawMsg, err := conn.ReadNextMessage()
-	if err != nil {
-		return
-
-	}
-
-	msgReader := bytes.NewReader(rawMsg)
-	msg, err := wtwire.ReadMessage(msgReader, 0)
-	if err != nil {
-		return
-	}
-
-	switch resp := msg.(type) {
-	case *wtwire.SessionAccept:
-		info.RewardAddress = resp.RewardAddress
-
-		needRetry = false
-
-		// TODO(conner): write session
-
-		select {
-		case sessions <- &ClientSessionInfo{
-			Addr:        tower.addr,
-			SessionInfo: info,
-		}:
-		case <-quit:
-		}
-
-	case *wtwire.SessionReject:
-
-	default:
-		fmt.Printf("received malformed response to session init")
-	}
 }
 
 func (s *sessionManager) stateManager() {
@@ -377,7 +240,8 @@ func (s *sessionManager) stateManager() {
 		case ReserveLevelGucci:
 			nextState, err = gucciManager()
 		default:
-			err = fmt.Errorf("unknown reserve state")
+			err = fmt.Errorf("unknown reserve state=%s",
+				s.reserveState)
 		}
 
 		if err != nil {
@@ -442,82 +306,51 @@ func (s *sessionManager) makeTransition(nextState ReserveLevel) error {
 }
 
 func (s *sessionManager) criticalManager() (ReserveLevel, error) {
-	// TODO(conner): check num active sessions
+	s.negotiator.RequestSession()
 
-	numTowers := s.numTowersTillGucci()
-	if numTowers == 0 {
-		return nil
-	}
-
-	twrs, err := c.fetchTowers(numTowers)
-	if err != nil {
-		return err
-	}
-
-	candidates := NewTowerListIterator(twrs)
-
-	dispatcher := make(chan struct{}, numTowers)
-	for i := 0; i < numTowers; i++ {
-		dispatcher <- struct{}{}
-	}
-
-	sessions := make(chan struct{})
-
-	var numComplete int
 	for {
 		select {
-		case update := <-s.newUpdates:
-			// TODO(conner): add to overflow queue
-
-		case <-dispatcher:
-			tower, err := candidates.Next()
-			if err != nil {
-				// TODO(conner): wait for pending session to
-				// clean up?
-				return ReserveLevelInvalid, err
-			}
-
-			c.wg.Add(1)
-			go s.initSession(tower, dispatcher, sessions)
-
-		case sessionInfo := <-sessions:
+		case sessionInfo := <-s.negotiator.NewSessions():
 			// TODO(conner): write info to client session db
 			err := s.AddSession(sessionInfo)
 			if err != nil {
 				return err
 			}
 
-			numComplete++
-			if numComplete >= numTowers {
-				return ReserveLevelGucci, nil
-			}
-
 		case <-c.quit:
 			return ReserveLevelInvalid, ErrWtClientShuttingDown
 		}
+
+		if !s.isLow() {
+			return ReserveLevelGucci, nil
+		}
+
+		s.negotiator.RequestSession()
 	}
 }
 
 func (s *sessionManager) lowManager() (ReserveLevel, error) {
-	defer s.wg.Done()
+	s.negotiator.RequestSession()
 
 	for {
-		var decreasesReserve bool
-		var increasesReserve bool
+		var (
+			decreasesReserve bool
+			increasesReserve bool
+		)
+
 		select {
-		case sessionInfo := <-sessions:
+		case sessionInfo := <-s.negotiator.NewSessions():
 			err := s.AddSession(sessionInfo)
 			if err != nil {
 				return ReserveLevelInvalid, err
 			}
 			increasesReserve = true
 
-		case update := <-s.newUpdates:
+		case update := <-s.queue.NewRevokedStates():
 			err := s.QueueState(update)
 			switch {
-			// TODO(conner): add err for low
+			case err == ErrLowSession:
 			case err == ErrSessionsExhausted:
-				s.pruneEmptySessions()
 				decreasesReserve = true
 			case err != nil:
 				return ReserveLevelInvalid, err
@@ -530,20 +363,32 @@ func (s *sessionManager) lowManager() (ReserveLevel, error) {
 		if decreasesReserve && s.isCritical() {
 			return ReserveLevelCritical, nil
 		}
-		if increasesReserve && !s.isLow() {
-			return ReserveLevelGucci, nil
+		if increasesReserve {
+			if !s.isLow() {
+				return ReserveLevelGucci, nil
+			}
+			s.negotiator.RequestSession()
 		}
 	}
 }
 
 func (s *sessionManager) gucciManager() (ReserveLevel, error) {
-	defer s.wg.Done()
-
 	for {
+		var decreasesReserve bool
 		select {
-		case update := <-s.newUpdates:
-			err := s.QueueState(update)
+		case sessionInfo := <-s.negotiator.NewSessions():
+			err := s.AddSession(sessionInfo)
 			if err != nil {
+				return ReserveLevelInvalid, err
+			}
+
+		case revokedStates := <-s.queue.NewRevokedStates():
+			err := s.QueueState(revokedStates)
+			// TODO(conner): add err for low
+			switch {
+			case err == ErrLowSession:
+				decreasesReserve = true
+			case err != nil:
 				return ReserveLevelInvalid, err
 			}
 
@@ -551,7 +396,7 @@ func (s *sessionManager) gucciManager() (ReserveLevel, error) {
 			return ReserveLevelInvalid, ErrWtClientShuttingDown
 		}
 
-		if s.isLow() {
+		if decreasesReserve && s.isLow() {
 			return ReserveLevelLow, nil
 		}
 	}
@@ -578,12 +423,4 @@ func (s *sessionManager) isLow() bool {
 	}
 
 	return numGucci < s.numTowers
-}
-
-func (s *sessionManager) pruneEmptySessions() {
-	for id, session := range s.sessions {
-		if session.reserveState == ReserveLevelEmpty {
-			delete(s.sessions, id)
-		}
-	}
 }

@@ -31,26 +31,26 @@ func (m *updateManager) Stop() error {
 	return nil
 }
 
-type TowerPriorityQueue []*ClientSessionInfo
+type sessionPQ []*sessionState
 
-func (pq TowerPriorityQueue) Len() int {
+func (pq sessionPQ) Len() int {
 	return len(pq)
 }
 
-func (pq TowerPriorityQueue) Less(i, j int) bool {
-	return pq[i].LastSeqNum > pq[j].LastSeqNum
+func (pq sessionPQ) Less(i, j int) bool {
+	return pq[i].Score() > pq[j].Score()
 }
 
-func (pq TowerPriorityQueue) Swap(i, j int) {
+func (pq sessionPQ) Swap(i, j int) {
 	pq[i], pq[j] = pq[j], pq[i]
 }
 
-func (pq *TowerPriorityQueue) Push(x interface{}) {
+func (pq *sessionPQ) Push(x interface{}) {
 	item := x.(*ClientSessionInfo)
 	*pq = append(*pq, item)
 }
 
-func (pq *TowerPriorityQueue) Pop() interface{} {
+func (pq *sessionPQ) Pop() interface{} {
 	n := len(*pq)
 	item := (*pq)[n-1]
 	*pq = (*pq)[0 : n-1]

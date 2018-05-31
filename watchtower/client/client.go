@@ -410,11 +410,11 @@ FindTower:
 	return nil
 }
 
-func (c *Client) connect(tower *towerConfig) (*brontide.Conn, error) {
+func (c *Client) connect(addr *lnwire.NetAddress) (*brontide.Conn, error) {
 	// TODO(conner): use new public key for each connection.
 
 	// Must establish connection before we can continue.
-	conn, err := brontide.Dial(c.identityPriv, tower.addr)
+	conn, err := brontide.Dial(c.identityPriv, addr)
 	if err != nil {
 		return nil, err
 	}
