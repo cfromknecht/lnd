@@ -1,9 +1,17 @@
 package wtdb
 
 import (
-	"encoding/binary"
+	"bytes"
+	"errors"
 	"io"
+	"net"
+	"sync"
+	"time"
 
+	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/go-socks/socks"
+	"github.com/coreos/bbolt"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
@@ -20,6 +28,10 @@ var (
 	// query for all open channels pertaining to the node by exploring each
 	// node's sub-bucket within the openChanBucket.
 	towerBucket = []byte("towers")
+
+	ErrTowersNotFound = errors.New("tower bucket does not exist")
+
+	ErrTowerNotFound = errors.New("unable to find tower by pubkey")
 )
 
 // Tower stores metadata related to node's that we have/had a direct
@@ -67,23 +79,42 @@ type Tower struct {
 
 // NewTower creates a new Tower from the provided parameters, which is
 // backed by an instance of channeldb.
-func (db *ClientDB) NewTower(bitNet wire.BitcoinNet, pub *btcec.PublicKey,
-	addr net.Addr) (*Tower, error) {
+func (db *ClientDB) CreateTower(addr *lnwire.NetAddress) (*Tower, error) {
+	var (
+		tower *Tower
+		err   error
+	)
 
-	t := &Tower{
-		Network:     bitNet,
-		IdentityPub: pub,
-		LastSeen:    time.Now(),
-		Addresses:   []net.Addr{addr},
-		db:          db,
-	}
+	tower, err = db.FetchTower(addr.IdentityKey)
+	switch {
+	case err == ErrCorruptClientDB:
+		return nil, err
 
-	err := t.sync()
-	if err != nil {
+	case err == ErrTowerNotFound:
+		tower = &Tower{
+			Network:     addr.ChainNet,
+			IdentityPub: addr.IdentityKey,
+			LastSeen:    time.Now(),
+			Addresses:   []net.Addr{addr.Addr},
+			db:          db,
+		}
+
+		err := tower.sync()
+		if err != nil {
+			return nil, err
+		}
+
+	case err == nil:
+		err = tower.AddAddress(addr.Addr)
+		if err != nil {
+			return nil, err
+		}
+
+	default:
 		return nil, err
 	}
 
-	return t, nil
+	return tower, nil
 }
 
 // UpdateLastSeen updates the last time this node was directly encountered on
@@ -106,7 +137,7 @@ func (t *Tower) UpdateLastSeen(lastSeen time.Time) error {
 
 // AddAddress appends the specified TCP address to the list of known addresses
 // this node is/was known to be reachable at.
-func (l *Tower) AddAddress(addr *net.TCPAddr) error {
+func (t *Tower) AddAddress(addr *net.TCPAddr) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -116,10 +147,14 @@ func (l *Tower) AddAddress(addr *net.TCPAddr) error {
 		}
 	}
 
+	prveLastSeen := t.LastSeen
+	t.LastSeen = time.Now()
+
 	t.Addresses = append(t.Addresses, addr)
 
 	err := t.sync()
 	if err != nil {
+		t.LastSeen = prevLastSeen
 		t.Addresses = t.Addresses[:len(t.Addresses)-1]
 		return err
 	}
@@ -130,7 +165,6 @@ func (l *Tower) AddAddress(addr *net.TCPAddr) error {
 // sync performs a full database sync which writes the current up-to-date data
 // within the struct to the database.
 func (t *Tower) sync() error {
-
 	// Finally update the database by storing the link node and updating
 	// any relevant indexes.
 	return l.db.Update(func(tx *bolt.Tx) error {
@@ -161,33 +195,12 @@ func putTower(towerBucket *bolt.Bucket, t *Tower) error {
 
 // FetchTower attempts to lookup the data for a Tower based on a target
 // identity public key. If a particular Tower for the passed identity public
-// key cannot be found, then ErrNodeNotFound if returned.
+// key cannot be found, then ErrTowerNotFound if returned.
 func (db *ClientDB) FetchTower(identity *btcec.PublicKey) (*Tower, error) {
-	var (
-		tower *Tower
-		err   error
-	)
-
-	err = db.View(func(tx *bolt.Tx) error {
-		// First fetch the bucket for storing node metadata, bailing
-		// out early if it hasn't been created yet.
-		towerBucket := tx.Bucket(towerBucketKey)
-		if towerBucketKey == nil {
-			return ErrTowersNotFound
-		}
-
-		// If a link node for that particular public key cannot be
-		// located, then exit early with an ErrNodeNotFound.
-		pubKey := identity.SerializeCompressed()
-		towerBytes := towerBucket.Get(pubKey)
-		if nodeBytes == nil {
-			return ErrNodeNotFound
-		}
-
-		// Finally, decode an allocate a fresh Tower object to be
-		// returned to the caller.
-		towerReader := bytes.NewReader(towerBytes)
-		tower, err = deserializeTower(towerReader)
+	var tower *Tower
+	err := db.cfg.DB.View(func(tx *bolt.Tx) error {
+		var err error
+		tower, err = fetchTower(tx, identity)
 		return err
 	})
 	if err != nil {
@@ -195,6 +208,29 @@ func (db *ClientDB) FetchTower(identity *btcec.PublicKey) (*Tower, error) {
 	}
 
 	return tower, nil
+}
+
+func fetchTower(tx *bolt.Tx, identity *btcec.PublicKey) (*Tower, error) {
+	// First fetch the bucket for storing node metadata, bailing
+	// out early if it hasn't been created yet.
+	towerBucket := tx.Bucket(towerBucketKey)
+	if towerBucketKey == nil {
+		return nil, ErrCorruptClientDB
+	}
+
+	// If a link node for that particular public key cannot be
+	// located, then exit early with an ErrTowerNotFound.
+	pubKey := identity.SerializeCompressed()
+	towerBytes := towerBucket.Get(pubKey)
+	if nodeBytes == nil {
+		return nil, ErrTowerNotFound
+	}
+
+	// Finally, decode an allocate a fresh Tower object to be
+	// returned to the caller.
+	towerReader := bytes.NewReader(towerBytes)
+
+	return deserializeTower(towerReader)
 }
 
 // FetchAllTowers attempts to fetch all active Towers from the database.
