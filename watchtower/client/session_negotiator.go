@@ -77,21 +77,30 @@ func (n *sessionNegotiator) Stop() error {
 func (n *sessionNegotiator) negotiationDispatcher() {
 	defer n.wg.Done()
 
-	// TODO(conner): check num active sessions
+	successfulNegotiations := make(chan *ClientSessionInfo)
 
+	var isNegotiating bool
 	for {
 		select {
 		case <-n.dispatcher:
-			n.mu.Lock()
-			if n.isNegotiating {
-				n.mu.Unlock()
+			if isNegotiating {
 				continue
 			}
-			n.isNegotiating = true
-			n.mu.Unlock()
+			isNegotiating = true
+
+			// TODO(conner): consider reusing good towers
 
 			c.wg.Add(1)
-			go c.findTower()
+			go c.findTower(successfulNegotiations)
+
+		case session := <-successfulNegotiations:
+			select {
+			case n.newSessions <- session:
+			case <-n.quit:
+				return ErrWtClientShuttingDown
+			}
+
+			isNegotiating = false
 
 		case <-c.quit:
 			return ErrWtClientShuttingDown
@@ -99,7 +108,9 @@ func (n *sessionNegotiator) negotiationDispatcher() {
 	}
 }
 
-func (n *sessionNegotiator) findTower() {
+func (n *sessionNegotiator) findTower(
+	successfulNegotiations chan *ClientSessionInfo) {
+
 	defer n.wg.Done()
 
 	for {
@@ -111,14 +122,16 @@ func (n *sessionNegotiator) findTower() {
 			return
 		}
 
-		done := n.initSession(addr)
+		done := n.initSession(addr, successfulNegotiations)
 		if done {
 			return
 		}
 	}
 }
 
-func (n *sessionNegotiator) initSession(addr *lnwire.NetAddress) bool {
+func (n *sessionNegotiator) initSession(addr *lnwire.NetAddress,
+	successfulNegotiations chan *ClientSessionInfo) bool {
+
 	conn, err := n.cfg.Dial(addr)
 	if err != nil {
 		fmt.Printf("unable to connect to watchtower=%v: %v\n",
@@ -126,15 +139,11 @@ func (n *sessionNegotiator) initSession(addr *lnwire.NetAddress) bool {
 		return false
 	}
 
-	tower, err := n.cfg.DB.NewTower(
-		addr.BitcoinNet, addr.IdentityKey, addr.Addr,
-	)
+	tower, err := n.cfg.DB.CreateTower(addr)
 	if err != nil {
 		fmt.Printf("unable to create new watchtower: %v\n", err)
 		return false
 	}
-
-	// TODO(conner): add tower to known peers after successful connection
 
 	init := &wtwire.SessionInit{
 		Version:      n.cfg.Version,
@@ -200,17 +209,13 @@ func (n *sessionNegotiator) initSession(addr *lnwire.NetAddress) bool {
 
 		// TODO(conner): write session
 
-		n.mu.Lock()
-		n.isNegotiating = false
-		n.mu.Unlock()
-
 		session := &ClientSessionInfo{
 			Tower:       tower,
 			SessionInfo: info,
 		}
 
 		select {
-		case n.newSessions <- session:
+		case successfulNegotiations <- session:
 		case <-quit:
 		}
 

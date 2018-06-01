@@ -18,7 +18,6 @@ type ReserveLevel byte
 
 const (
 	ReserveLevelInvalid ReserveLevel = iota
-	ReserveLevelEmpty
 	ReserveLevelCritical
 	ReserveLevelLow
 	ReserveLevelGucci
@@ -28,8 +27,6 @@ func (e ReserveLevel) String() string {
 	switch e {
 	case ReserveLevelInvalid:
 		return "ReserveLevelInvalid"
-	case ReserveLevelEmpty:
-		return "ReserveLevelEmpty"
 	case ReserveLevelCritical:
 		return "ReserveLevelCritical"
 	case ReserveLevelLow:
@@ -47,7 +44,7 @@ type SessionManager interface {
 }
 
 // TODO(conner): make persistent
-type sessionManager struct {
+type stateManager struct {
 	started uint32
 	stopped uint32
 
@@ -63,8 +60,8 @@ type sessionManager struct {
 	quit chan struct{}
 }
 
-func newSessionManager(negotiator SessionNegotiator) *sessionManager {
-	return &sessionManager{
+func newSessionManager(negotiator SessionNegotiator) *stateManager {
+	return &stateManager{
 		negotiator: negotiator,
 		queue:      newRevokedStateQueue(),
 		sessions:   make(map[*lnwire.NetAddress]*ClientSessionInfo),
@@ -72,7 +69,7 @@ func newSessionManager(negotiator SessionNegotiator) *sessionManager {
 	}
 }
 
-func (s *sessionManager) Start() error {
+func (s *stateManager) Start() error {
 	if !atomic.CompareAndSwapUint32(&s.started, 0, 1) {
 		return nil
 	}
@@ -80,7 +77,7 @@ func (s *sessionManager) Start() error {
 	return s.loadInitialState()
 }
 
-func (s *sessionManager) Stop() error {
+func (s *stateManager) Stop() error {
 	if !atomic.CompareAndSwapUint32(&s.started, 0, 1) {
 		return nil
 	}
@@ -91,7 +88,7 @@ func (s *sessionManager) Stop() error {
 	return nil
 }
 
-func (m *sessionManager) AddSession(session *sessionState) error {
+func (m *stateManager) AddSession(session *sessionState) error {
 	sessionID := session.ID()
 
 	if _, ok := m.sessions[sessionID]; ok {
@@ -111,7 +108,7 @@ var (
 	ErrSessionAlreadyActive = errors.New("session already active")
 )
 
-func (m *sessionManager) QueueState(state *wtwire.StateUpdate) error {
+func (m *stateManager) QueueState(state *wtwire.StateUpdate) error {
 	var numScheduledBackups int
 	var haveLowSession bool
 	for id, session := range m.sessions {
@@ -222,7 +219,7 @@ type ClientSessionInfo struct {
 	SessionInfo *wtdb.SessionInfo
 }
 
-func (s *sessionManager) stateManager() {
+func (s *stateManager) stateManager() {
 	defer s.wg.Done()
 
 	var exitErr error
@@ -267,7 +264,7 @@ func (e ErrInvalidTransition) Error() string {
 		"%s", e.from, e.to)
 }
 
-func (s *sessionManager) makeTransition(nextState ReserveLevel) error {
+func (s *stateManager) makeTransition(nextState ReserveLevel) error {
 	trxnErr := ErrInvalidTransition{s.reserveState, nextState}
 	if nextState == ReserveLevelInvalid {
 		return trxnErr
@@ -305,7 +302,7 @@ func (s *sessionManager) makeTransition(nextState ReserveLevel) error {
 	}
 }
 
-func (s *sessionManager) criticalManager() (ReserveLevel, error) {
+func (s *stateManager) criticalManager() (ReserveLevel, error) {
 	s.negotiator.RequestSession()
 
 	for {
@@ -329,7 +326,7 @@ func (s *sessionManager) criticalManager() (ReserveLevel, error) {
 	}
 }
 
-func (s *sessionManager) lowManager() (ReserveLevel, error) {
+func (s *stateManager) lowManager() (ReserveLevel, error) {
 	s.negotiator.RequestSession()
 
 	for {
@@ -372,7 +369,7 @@ func (s *sessionManager) lowManager() (ReserveLevel, error) {
 	}
 }
 
-func (s *sessionManager) gucciManager() (ReserveLevel, error) {
+func (s *stateManager) gucciManager() (ReserveLevel, error) {
 	for {
 		var decreasesReserve bool
 		select {
@@ -402,7 +399,7 @@ func (s *sessionManager) gucciManager() (ReserveLevel, error) {
 	}
 }
 
-func (s *sessionManager) isCritical() bool {
+func (s *stateManager) isCritical() bool {
 	var numReplicas int
 	for _, session := range s.sessions {
 		if session.reserveState == ReserveLevelGucci ||
@@ -414,7 +411,7 @@ func (s *sessionManager) isCritical() bool {
 	return numReplicas < s.numTowers
 }
 
-func (s *sessionManager) isLow() bool {
+func (s *stateManager) isLow() bool {
 	var numGucci int
 	for _, session := range s.sessions {
 		if session.reserveState == ReserveLevelGucci {
