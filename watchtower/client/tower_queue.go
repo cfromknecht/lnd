@@ -318,6 +318,8 @@ func (q *revokedStateQueue) queueManager() {
 		}
 
 		if len(retributions) > 0 {
+			// TODO(conner): backup to private watchtowers
+
 			select {
 			case q.newRevokedStates <- revokedStates:
 			case <-q.force:
@@ -340,7 +342,7 @@ func (q *revokedStateQueue) NewRevokedStates() <-chan []*wtdb.RevokedState {
 	return q.newRevokedStates
 }
 
-func (q *revokedStates) QueueRevokedState(states ...*wtdb.RevokedState) error {
+func (q *revokedStateQueue) QueueRevokedState(states ...*wtdb.RevokedState) error {
 	q.queueCond.L.Lock()
 	select {
 	case <-q.quit:

@@ -273,6 +273,8 @@ func (m *channelManager) LookupChannel(
 }
 
 func (c *Client) RegisterChannel(channelState *channeldb.OpenChannel) error {
+	// TODO(conner): configure watchtower params/channel
+
 	chanID := lnwire.NewChanIDFromOutPoint(channelState.FundingOutpoint)
 	return c.channels.WatchChannel(chanID, channelState)
 }
