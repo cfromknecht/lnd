@@ -95,7 +95,7 @@ func (m *stateManager) AddSession(session *sessionState) error {
 		return ErrSessionAlreadyActive
 	}
 
-	m.sessions[session.ID()] = session
+	m.sessions[sessionID] = session
 
 	return nil
 }
@@ -121,12 +121,12 @@ func (m *stateManager) QueueState(state *wtwire.StateUpdate) error {
 		case err == ErrSessionFull:
 			continue
 
-		case err != nil:
-			return err
-
 		case err == ErrLowSession:
 			haveLowSession = true
-			fallthrough
+			numScheduledBackups++
+
+		case err != nil:
+			return err
 
 		default:
 			numScheduledBackups++
@@ -311,7 +311,7 @@ func (s *stateManager) criticalManager() (ReserveLevel, error) {
 			// TODO(conner): write info to client session db
 			err := s.AddSession(sessionInfo)
 			if err != nil {
-				return err
+				return ReserveLevelInvalid, err
 			}
 
 		case <-c.quit:

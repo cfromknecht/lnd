@@ -130,6 +130,8 @@ type Client struct {
 
 	sessions SessionManager
 
+	queue *revokedStateQueue
+
 	wg   sync.WaitGroup
 	quit chan struct{}
 }
@@ -139,6 +141,7 @@ func New(cfg *Config) (*Client, error) {
 	c := &Client{
 		cfg:            cfg,
 		activeSessions: make(map[uint64][]*watchSession),
+		queue:          newRevokedStateQueue(),
 		quit:           make(chan struct{}),
 	}
 	return c, nil
@@ -152,6 +155,10 @@ func (c *Client) Start() error {
 		return nil
 	}
 
+	if err := c.queue.Start(); err != nil {
+		return err
+	}
+
 	return c.initSessions(c.cfg.NumTowers)
 }
 
@@ -161,6 +168,8 @@ func (c *Client) Stop() error {
 	if !atomic.CompareAndSwapInt32(&c.shutdown, 0, 1) {
 		return nil
 	}
+
+	c.queue.Stop()
 
 	close(c.quit)
 	c.wg.Wait()
@@ -279,20 +288,10 @@ func (c *Client) Backup(state *wtdb.RevokedState) error {
 		return err
 	}
 
-	return c.scheduler.ScheduleStateUpdate(state)
-
-	fundHeight := channelState.ShortChanID.BlockHeight
-	breachRetribution, err := lnwallet.NewBreachRetribution(
-		channelState, state.CommitHeight, state.CommitTxID, fundHeight,
-	)
-	if err != nil {
-		return err
-	}
-
 	// TODO(conner): queue for watchtower delivery
 	// TODO(conner): add subscription event?
 
-	return nil
+	return c.queue.QueueRevokedState(state)
 }
 
 // QueueNewState will add a new channel state to the pipeline of states

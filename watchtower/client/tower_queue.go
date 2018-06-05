@@ -190,6 +190,7 @@ type revokedStateQueue struct {
 	queueCond *sync.Cond
 	queue     *list.List
 
+	channels         ChannelManager
 	newRevokedStates chan []*wtdb.RevokedState
 
 	quit     chan struct{}
@@ -289,10 +290,39 @@ func (q *revokedStateQueue) queueManager() {
 		}
 		q.queueCond.L.Unlock()
 
-		select {
-		case q.newRevokedStates <- revokedStates:
-		case <-q.force:
-			return
+		var retributions []*lnwallet.BreachRetribution
+		for _, revokedState := range revokedStates {
+			chanState, err := t.channels.LookupChannel(
+				revokedState.ChanID,
+			)
+			if err != nil {
+				fmt.Printf("unable to retrieve channel state "+
+					"for channel=%v: %v",
+					revokedState.ChanID, err)
+				continue
+			}
+
+			fundHeight := chanState.ShortChanID.BlockHeight
+			breachRetribution, err := lnwallet.NewBreachRetribution(
+				channelState, chanState.CommitHeight,
+				chanState.CommitTxID, fundHeight,
+			)
+			if err != nil {
+				fmt.Printf("unable to retrieve breach "+
+					"retribution for channel=%v: %v\n",
+					chanState.ChanID, err)
+				continue
+			}
+
+			retributions = append(retributions, breachInfo)
+		}
+
+		if len(retributions) > 0 {
+			select {
+			case q.newRevokedStates <- revokedStates:
+			case <-q.force:
+				return
+			}
 		}
 
 		select {
