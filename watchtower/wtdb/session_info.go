@@ -18,6 +18,20 @@ var (
 	ErrFeeExceedsInputs     = errors.New("sweep fee exceeds input values")
 )
 
+type BackupParams struct {
+	Version uint16
+
+	MaxUpdates  uint16
+	LastSeqNum  uint16
+	LastApplied uint16
+
+	RewardRate   uint32
+	SweepFeeRate lnwallet.SatPerVByte
+
+	RewardAddress []byte
+	SweepAddress  []byte
+}
+
 type SessionInfo struct {
 	ID SessionID
 
