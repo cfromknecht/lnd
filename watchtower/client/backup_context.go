@@ -62,42 +62,60 @@ func (c *ChannelGuard) currentParams() *wtdb.BackupParams {
 	return c.params[len(c.params)-1]
 }
 
-func (c *ChannelGuard) RegisterReceipt(height uint64, receipt *BackupReceipt,
+func (c *ChannelGuard) RegisterReceipt(
+	height uint64,
+	receipt *BackupReceipt,
 	private bool) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if private {
-		c.privateTracker.setState(height, receipt, backupStateCommitted)
+		return c.privateTracker.setState(
+			height, receipt, backupStateCommitted,
+		)
 	} else {
-		c.publicTracker.setState(height, receipt, backupStateCommitted)
+		return c.publicTracker.setState(
+			height, receipt, backupStateCommitted,
+		)
 	}
 }
 
-func (c *ChannelGuard) SetPendingReceipt(height uint64, receipt *BackupReceipt,
+func (c *ChannelGuard) SetPendingReceipt(
+	height uint64,
+	receipt *BackupReceipt,
 	private bool) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if private {
-		c.privateTracker.setState(height, receipt, backupStatePending)
+		return c.privateTracker.setState(
+			height, receipt, backupStatePending,
+		)
 	} else {
-		c.publicTracker.setState(height, receipt, backupStatePending)
+		return c.publicTracker.setState(
+			height, receipt, backupStatePending,
+		)
 	}
 }
 
-func (c *ChannelGuard) AckReceipt(height uint64, receipt *BackupReceipt,
-	private bool) {
+func (c *ChannelGuard) AckReceipt(
+	height uint64,
+	receipt *BackupReceipt,
+	private bool) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if private {
-		c.privateTracker.setState(height, receipt, backupStateAcked)
+		return c.privateTracker.setState(
+			height, receipt, backupStateAcked,
+		)
 	} else {
-		c.publicTracker.setState(height, receipt, backupStateAcked)
+		return c.publicTracker.setState(
+			height, receipt, backupStateAcked,
+		)
 	}
 }
 
@@ -110,13 +128,13 @@ type BackupContext struct {
 }
 
 func (c *BackupContext) RegisterBackup(receipt *BackupReceipt, private bool) {
-	c.Guard.RegisterReceipt(c.State.CommitHeight, receipt, private)
+	return c.Guard.RegisterReceipt(c.State.CommitHeight, receipt, private)
 }
 
 func (c *BackupContext) SetPendingBackup(receipt *BackupReceipt, private bool) {
-	c.Guard.SetPendingReceipt(c.State.CommitHeight, receipt, private)
+	return c.Guard.SetPendingReceipt(c.State.CommitHeight, receipt, private)
 }
 
 func (c *BackupContext) AckBackup(receipt *BackupReceipt, private bool) {
-	c.Guard.AckReceipt(c.State.CommitHeight, receipt, private)
+	return c.Guard.AckReceipt(c.State.CommitHeight, receipt, private)
 }

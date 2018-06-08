@@ -246,11 +246,13 @@ func (s *stateManager) stateManager() {
 			return
 		}
 
-		err = s.makeTransition(nextState)
+		err = s.verifyTransition(nextState)
 		if err != nil {
 			exitErr = err
 			return
 		}
+
+		s.reserveState = nextState
 	}
 }
 
@@ -264,7 +266,7 @@ func (e ErrInvalidTransition) Error() string {
 		"%s", e.from, e.to)
 }
 
-func (s *stateManager) makeTransition(nextState ReserveLevel) error {
+func (s *stateManager) verifyTransition(nextState ReserveLevel) error {
 	trxnErr := ErrInvalidTransition{s.reserveState, nextState}
 	if nextState == ReserveLevelInvalid {
 		return trxnErr
