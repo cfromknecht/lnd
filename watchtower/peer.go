@@ -25,6 +25,14 @@ type peer struct {
 	writeTimeout time.Duration
 }
 
+func NewPeer(conn *brontide.Conn, readTimeout, writeTimeout time.Duration) Peer {
+	return &peer{
+		conn:         conn,
+		readTimeout:  readTimeout,
+		writeTimeout: writeTimeout,
+	}
+}
+
 func (p *peer) SendMessage(msg *wtwire.Message, sync bool) error {
 	if !sync {
 		p.queueMsg(msg, nil)
@@ -58,6 +66,7 @@ out:
 			if err != nil {
 
 			}
+
 			err = p.conn.SetWriteDeadline(p.writeTimeout)
 			if err != nil {
 				return err
