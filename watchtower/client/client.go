@@ -111,6 +111,12 @@ type Config struct {
 	DB                *wtdb.ClientDB
 	Signer            lnwallet.Signer
 	IdentityPrivKey   *btcec.PrivateKey
+
+	Dial func(*lnwire.NetAddress) (*brontide.Conn, error)
+
+	PrivateTowers       []*lnwire.NetAddress
+	NumPublicTowers     int
+	PublicTowerIterator TowerCandidateIterator
 }
 
 // Client is a module that takes care of finding and communicating with
@@ -128,6 +134,9 @@ type Client struct {
 	// TODO(conner): replace with rotating keys
 	identityPriv *btcec.PrivateKey
 
+	privatePools map[[33]byte]ReserveManager
+	publicPool
+
 	sessions SessionManager
 
 	queue *revokedStateQueue
@@ -140,10 +149,35 @@ type Client struct {
 func New(cfg *Config) (*Client, error) {
 	c := &Client{
 		cfg:            cfg,
+		privatePools:   make(map[[33]byte]ReserveManager),
 		activeSessions: make(map[uint64][]*watchSession),
 		queue:          newRevokedStateQueue(),
 		quit:           make(chan struct{}),
 	}
+
+	for _, privateTower := range cfg.PrivateTowers {
+		var pubkey [33]byte
+		copy(pubkey[:], privateTower.IdentityKey.SerializeCompressed())
+		if _, ok := c.privatePools[pubkey]; ok {
+			continue
+		}
+
+		privateTowerIterator := NewTowerListIterator(privateTower)
+		privateSessionNegoiator := NewSessionNegotiator(
+			&NegotiatorConfig{
+				DB:         cfg.DB,
+				Dial:       cfg.Dial,
+				Candidates: privateTowerIterator,
+			},
+		)
+
+		privateReserveManager := newReserveManager(
+			privateSessionNegoiator, 1,
+		)
+
+		c.privatePools[pubkey] = privateReserveManager
+	}
+
 	return c, nil
 }
 

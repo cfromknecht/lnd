@@ -10,16 +10,17 @@ import (
 
 type TowerCandidateIterator interface {
 	Next() (*lnwire.NetAddress, error)
+	Reset() error
 }
 
 // TODO(conner): implement db backed candidate iterator
 type towerListIterator struct {
-	mu           sync.Mutex
-	curCandidate int
-	candidates   *list.List
+	mu            sync.Mutex
+	candidates    *list.List
+	nextCandidate *list.Element
 }
 
-func NewTowerListIterator(candidates []*lnwire.NetAddress) *towerListIterator {
+func NewTowerListIterator(candidates ...*lnwire.NetAddress) *towerListIterator {
 	iter := &towerListIterator{
 		candidates: list.New(),
 	}
@@ -27,6 +28,7 @@ func NewTowerListIterator(candidates []*lnwire.NetAddress) *towerListIterator {
 	for _, candidate := range candidates {
 		iter.candidates.PushBack(candidate)
 	}
+	iter.nextCandidate = iter.candidates.Front()
 
 	return iter
 }
@@ -37,13 +39,17 @@ func (t *towerListIterator) Next() (*lnwire.NetAddress, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	next := t.candidates.Front()
-	if next == nil {
+	if iter.nextCandidate == nil {
 		return nil, ErrTowerCandidatesExhausted
 	}
 
-	tower := t.candidates.Remove(next).(*lnwire.NetAddress)
-	t.curCandidate++
+	tower := iter.nextCandidate(*lnwire.NetAddress)
+	iter.nextCandidate = iter.nextCandidate.Next()
 
 	return tower, nil
+}
+
+func (t *towerListIterator) Reset() error {
+	t.nextCandidate = t.candidates.Front()
+	return nil
 }

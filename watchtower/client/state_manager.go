@@ -38,30 +38,34 @@ func (e ReserveLevel) String() string {
 	}
 }
 
-type SessionManager interface {
+type ReserveManager interface {
 	AddSession(*sessionState) error
 	QueueState(state *RevokedState) error
 }
 
 // TODO(conner): make persistent
-type stateManager struct {
+type reserveManager struct {
 	started uint32
 	stopped uint32
 
 	numBackups int
+	negotiator SessionNegotiator
 
 	reserveState ReserveLevel
 
-	queue      *revokedStateQueue
-	negotiator SessionNegotiator
-	sessions   map[*wtdb.SessionID]*sessionState
+	queue    *revokedStateQueue
+	sessions map[*wtdb.SessionID]*sessionState
 
 	wg   sync.WaitGroup
 	quit chan struct{}
 }
 
-func newSessionManager(negotiator SessionNegotiator) *stateManager {
-	return &stateManager{
+func newReserveManager(
+	negotiator SessionNegotiator,
+	numBackups int) *reserveManager {
+
+	return &reserveManager{
+		numBackups: numBackups,
 		negotiator: negotiator,
 		queue:      newRevokedStateQueue(),
 		sessions:   make(map[*lnwire.NetAddress]*ClientSessionInfo),
@@ -69,7 +73,7 @@ func newSessionManager(negotiator SessionNegotiator) *stateManager {
 	}
 }
 
-func (s *stateManager) Start() error {
+func (s *reserveManager) Start() error {
 	if !atomic.CompareAndSwapUint32(&s.started, 0, 1) {
 		return nil
 	}
@@ -77,7 +81,7 @@ func (s *stateManager) Start() error {
 	return s.loadInitialState()
 }
 
-func (s *stateManager) Stop() error {
+func (s *reserveManager) Stop() error {
 	if !atomic.CompareAndSwapUint32(&s.started, 0, 1) {
 		return nil
 	}
@@ -88,7 +92,7 @@ func (s *stateManager) Stop() error {
 	return nil
 }
 
-func (m *stateManager) AddSession(session *sessionState) error {
+func (m *reserveManager) AddSession(session *sessionState) error {
 	sessionID := session.ID()
 
 	if _, ok := m.sessions[sessionID]; ok {
@@ -108,7 +112,7 @@ var (
 	ErrSessionAlreadyActive = errors.New("session already active")
 )
 
-func (m *stateManager) QueueState(state *wtwire.StateUpdate) error {
+func (m *reserveManager) QueueState(state *wtwire.StateUpdate) error {
 	var numScheduledBackups int
 	var haveLowSession bool
 	for id, session := range m.sessions {
@@ -219,7 +223,7 @@ type ClientSessionInfo struct {
 	SessionInfo *wtdb.SessionInfo
 }
 
-func (s *stateManager) stateManager() {
+func (s *reserveManager) reserveManager() {
 	defer s.wg.Done()
 
 	var exitErr error
@@ -266,7 +270,7 @@ func (e ErrInvalidTransition) Error() string {
 		"%s", e.from, e.to)
 }
 
-func (s *stateManager) verifyTransition(nextState ReserveLevel) error {
+func (s *reserveManager) verifyTransition(nextState ReserveLevel) error {
 	trxnErr := ErrInvalidTransition{s.reserveState, nextState}
 	if nextState == ReserveLevelInvalid {
 		return trxnErr
@@ -304,7 +308,7 @@ func (s *stateManager) verifyTransition(nextState ReserveLevel) error {
 	}
 }
 
-func (s *stateManager) criticalManager() (ReserveLevel, error) {
+func (s *reserveManager) criticalManager() (ReserveLevel, error) {
 	s.negotiator.RequestSession()
 
 	for {
@@ -328,7 +332,7 @@ func (s *stateManager) criticalManager() (ReserveLevel, error) {
 	}
 }
 
-func (s *stateManager) lowManager() (ReserveLevel, error) {
+func (s *reserveManager) lowManager() (ReserveLevel, error) {
 	s.negotiator.RequestSession()
 
 	for {
@@ -371,7 +375,7 @@ func (s *stateManager) lowManager() (ReserveLevel, error) {
 	}
 }
 
-func (s *stateManager) gucciManager() (ReserveLevel, error) {
+func (s *reserveManager) gucciManager() (ReserveLevel, error) {
 	for {
 		var decreasesReserve bool
 		select {
@@ -401,7 +405,7 @@ func (s *stateManager) gucciManager() (ReserveLevel, error) {
 	}
 }
 
-func (s *stateManager) isCritical() bool {
+func (s *reserveManager) isCritical() bool {
 	var numReplicas int
 	for _, session := range s.sessions {
 		if session.reserveState == ReserveLevelGucci ||
@@ -413,7 +417,7 @@ func (s *stateManager) isCritical() bool {
 	return numReplicas < s.numTowers
 }
 
-func (s *stateManager) isLow() bool {
+func (s *reserveManager) isLow() bool {
 	var numGucci int
 	for _, session := range s.sessions {
 		if session.reserveState == ReserveLevelGucci {
