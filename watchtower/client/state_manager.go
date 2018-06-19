@@ -40,7 +40,7 @@ func (e ReserveLevel) String() string {
 
 type ReserveManager interface {
 	AddSession(*sessionState) error
-	QueueState(state *RevokedState) error
+	MaybeAcceptState(state *RevokedState) error
 }
 
 // TODO(conner): make persistent
@@ -112,11 +112,11 @@ var (
 	ErrSessionAlreadyActive = errors.New("session already active")
 )
 
-func (m *reserveManager) QueueState(state *wtwire.StateUpdate) error {
+func (m *reserveManager) MaybeAcceptState(state *wtwire.StateUpdate) error {
 	var numScheduledBackups int
 	var haveLowSession bool
 	for id, session := range m.sessions {
-		err := session.QueueState(state)
+		err := session.MaybeAcceptState(state)
 		switch {
 
 		case err == ErrSessionExhausted:
@@ -190,7 +190,7 @@ func (s *sessionState) Score() float64 {
 	return s.percentUsed()
 }
 
-func (s *sessionState) QueueState(state *wtwire.StateUpdate) error {
+func (s *sessionState) MaybeAcceptState(state *wtwire.StateUpdate) error {
 	if s.updatesRemaining() == 0 {
 		if s.Exhausted() {
 			return ErrSessionExhausted
@@ -350,7 +350,7 @@ func (s *reserveManager) lowManager() (ReserveLevel, error) {
 			increasesReserve = true
 
 		case update := <-s.queue.NewRevokedStates():
-			err := s.QueueState(update)
+			err := s.MaybeAcceptState(update)
 			switch {
 			case err == ErrLowSession:
 			case err == ErrSessionsExhausted:
@@ -386,7 +386,7 @@ func (s *reserveManager) gucciManager() (ReserveLevel, error) {
 			}
 
 		case revokedStates := <-s.queue.NewRevokedStates():
-			err := s.QueueState(revokedStates)
+			err := s.MaybeAcceptState(revokedStates)
 			// TODO(conner): add err for low
 			switch {
 			case err == ErrLowSession:

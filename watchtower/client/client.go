@@ -105,7 +105,6 @@ type watchSession struct {
 type Config struct {
 	Version           uint16
 	UpdatesPerSession uint16
-	NumTowers         uint16
 	RewardRate        uint32
 	SweepFeeRate      lnwallet.SatPerVByte
 	DB                *wtdb.ClientDB
@@ -135,7 +134,7 @@ type Client struct {
 	identityPriv *btcec.PrivateKey
 
 	privatePools map[[33]byte]ReserveManager
-	publicPool
+	publicPool   ReserveManager
 
 	sessions SessionManager
 
@@ -153,6 +152,17 @@ func New(cfg *Config) (*Client, error) {
 		activeSessions: make(map[uint64][]*watchSession),
 		queue:          newRevokedStateQueue(),
 		quit:           make(chan struct{}),
+	}
+
+	return c, nil
+}
+
+// Start starts the Client and its send loop, making it ready to
+// receive channels to distribute to watchtowers.
+func (c *Client) Start() error {
+	// Already running?
+	if !atomic.CompareAndSwapInt32(&c.started, 0, 1) {
+		return nil
 	}
 
 	for _, privateTower := range cfg.PrivateTowers {
@@ -175,25 +185,35 @@ func New(cfg *Config) (*Client, error) {
 			privateSessionNegoiator, 1,
 		)
 
+		err := privateReserveManager.Start()
+		if err != nil {
+			return err
+		}
+
 		c.privatePools[pubkey] = privateReserveManager
 	}
 
-	return c, nil
-}
+	publicSessionNegoitator := NewSessionNegotiator(
+		&NegotiatorConfig{
+			DB:         cfg.DB,
+			Dial:       cfg.Dial,
+			Candidates: cfg.PublicTowerIterator,
+		},
+	)
 
-// Start starts the Client and its send loop, making it ready to
-// receive channels to distribute to watchtowers.
-func (c *Client) Start() error {
-	// Already running?
-	if !atomic.CompareAndSwapInt32(&c.started, 0, 1) {
-		return nil
+	c.publicPool = newReserveManager(
+		publicSessionNegoitator, cfg.NumPublicReplicas,
+	)
+	err := c.publicPool.Start()
+	if err != nil {
+		return err
 	}
 
 	if err := c.queue.Start(); err != nil {
 		return err
 	}
 
-	return c.initSessions(c.cfg.NumTowers)
+	return c.initSessions(c.cfg.NumPublicReplicas)
 }
 
 // Stop stops this Client.
@@ -204,6 +224,11 @@ func (c *Client) Stop() error {
 	}
 
 	c.queue.Stop()
+
+	for _, privateReserveManager := range c.privatePools {
+		privateReserveManager.Stop()
+	}
+	c.publicPool.Stop()
 
 	close(c.quit)
 	c.wg.Wait()
