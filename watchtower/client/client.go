@@ -187,6 +187,7 @@ func (c *Client) Start() error {
 
 		err := privateReserveManager.Start()
 		if err != nil {
+			c.Stop()
 			return err
 		}
 
@@ -206,14 +207,23 @@ func (c *Client) Start() error {
 	)
 	err := c.publicPool.Start()
 	if err != nil {
+		c.Stop()
 		return err
 	}
 
-	if err := c.queue.Start(); err != nil {
+	err = c.queue.Start()
+	if err != nil {
+		c.Stop()
 		return err
 	}
 
-	return c.initSessions(c.cfg.NumPublicReplicas)
+	err = c.initSessions(c.cfg.NumPublicReplicas)
+	if err != nil {
+		c.Stop()
+		return err
+	}
+
+	return nil
 }
 
 // Stop stops this Client.
