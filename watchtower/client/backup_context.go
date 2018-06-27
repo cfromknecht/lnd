@@ -70,13 +70,6 @@ func (c *ChannelGuard) RegisterReceipt(
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	var tracker backupTracker
-	if private {
-		tracker = c.privateTracker
-	} else {
-		tracker = c.publicTracker
-	}
-
 	return tracker.setState(height, receipt, backupStateCommitted)
 }
 
@@ -88,14 +81,7 @@ func (c *ChannelGuard) SetPendingReceipt(
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	var tracker backupTracker
-	if private {
-		tracker = c.privateTracker
-	} else {
-		tracker = c.publicTracker
-	}
-
-	return tracker.setState(height, receipt, backupStatePending)
+	return c.setState(height, receipt, private, backupStatePending)
 }
 
 func (c *ChannelGuard) AckReceipt(
@@ -106,6 +92,15 @@ func (c *ChannelGuard) AckReceipt(
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	return c.setState(height, receipt, private, backupStateAcked)
+}
+
+func (c *ChannelGuard) setState(
+	height uint64,
+	receipt *BackupReceipt,
+	private bool,
+	state backupState) error {
+
 	var tracker backupTracker
 	if private {
 		tracker = c.privateTracker
@@ -113,7 +108,7 @@ func (c *ChannelGuard) AckReceipt(
 		tracker = c.publicTracker
 	}
 
-	return tracker.setState(height, receipt, backupStateAcked)
+	return tracker.setState(height, receipt, state)
 }
 
 type BackupContext struct {
