@@ -312,6 +312,7 @@ func (d *Descriptor) decodeV0(r io.Reader) error {
 	}
 
 	if d.HasP2WKHOutput {
+		d.Params.P2WKHPubKey = new(PubKey)
 		err = d.Params.DecodeP2WKHPubKey(r)
 		if err != nil {
 			return err
