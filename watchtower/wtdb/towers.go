@@ -77,6 +77,24 @@ type Tower struct {
 	db *ClientDB
 }
 
+func (t *Tower) Encode(w io.Writer) error {
+	return WriteElements(r,
+		t.Network,
+		t.IdentityPub,
+		t.LastSeen,
+		t.Addresses,
+	)
+}
+
+func (t *Tower) Decode(r io.Reader) error {
+	return ReadElements(r,
+		&t.Network,
+		&t.IdentityPub,
+		&t.LastSeen,
+		&t.Addresses,
+	)
+}
+
 // NewTower creates a new Tower from the provided parameters, which is
 // backed by an instance of channeldb.
 func (db *ClientDB) CreateTower(addr *lnwire.NetAddress) (*Tower, error) {
@@ -191,6 +209,8 @@ func (db *ClientDB) FetchTower(identity *btcec.PublicKey) (*Tower, error) {
 		return nil, err
 	}
 
+	tower.db = db
+
 	return tower, nil
 }
 
@@ -270,22 +290,4 @@ func (db *ClientDB) FetchAllTowers() ([]*Tower, error) {
 	}
 
 	return towers, nil
-}
-
-func (t *Tower) Encode(w io.Writer) error {
-	return WriteElements(r,
-		t.Network,
-		t.IdentityPub,
-		t.LastSeen,
-		t.Addresses,
-	)
-}
-
-func (t *Tower) Decode(r io.Reader) error {
-	return ReadElements(r,
-		&t.Network,
-		&t.IdentityPub,
-		&t.LastSeen,
-		&t.Addresses,
-	)
 }
