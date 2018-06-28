@@ -14,6 +14,14 @@ func WriteElement(w io.Writer, element interface{}) error {
 
 	switch e := element.(type) {
 	// TODO(conner): add types
+	case BreachHint:
+		if _, err := w.Write(e[:]); err != nil {
+			return err
+		}
+	case BreachKey:
+		if _, err := w.Write(e[:]); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -40,6 +48,14 @@ func ReadElement(r io.Reader, element interface{}) error {
 
 	switch e := element.(type) {
 	// TODO(conner): add types
+	case *BreachHint:
+		if _, err := io.ReadFull(r, e[:]); err != nil {
+			return err
+		}
+	case *BreachKey:
+		if _, err := io.ReadFull(r, e[:]); err != nil {
+			return err
+		}
 	}
 
 	return nil
