@@ -26,6 +26,10 @@ var (
 	byteOrder = binary.BigEndian
 
 	ErrUnknownBlobVersion = errors.New("unknown blob version")
+
+	ErrMissingP2WKHPubKey = errors.New("descriptor is missing P2WKH pubkey")
+	ErrMissingHtlcPubKey  = errors.New("descriptor is missing remote or " +
+		"local HTLC pubkey")
 )
 
 type PubKey [33]byte
@@ -33,107 +37,42 @@ type PubKey [33]byte
 type PaymentHash [20]byte
 
 type Descriptor struct {
-	HasP2WKHOutput   bool
+	RevocationPubKey PubKey
+	LocalDelayPubKey PubKey
+	CSVDelay         uint32
+
+	HasP2WKHOutput bool
+	P2WKHPubKey    *PubKey
+
 	NumOfferedHtlcs  uint16
 	NumReceivedHtlcs uint16
-
-	Params StaticScriptParams
+	RemoteHtlcPubKey *PubKey
+	LocalHtlcPubKey  *PubKey
 }
 
 func (d *Descriptor) CommitToLocalScript() ([]byte, error) {
 	revocationPubKey, err := btcec.ParsePubKey(
-		d.Params.RevocationPubKey[:], btcec.S256(),
+		d.RevocationPubKey[:], btcec.S256(),
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	localDelayedPubKey, err := btcec.ParsePubKey(
-		d.Params.LocalDelayPubKey[:], btcec.S256(),
+		d.LocalDelayPubKey[:], btcec.S256(),
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	return lnwallet.CommitScriptToSelf(
-		d.Params.CSVDelay, localDelayedPubKey, revocationPubKey,
+		d.CSVDelay, localDelayedPubKey, revocationPubKey,
 	)
 }
 
 func (d *Descriptor) CommitP2WKHScript() []byte {
-	p2wkh160 := btcutil.Hash160(d.Params.P2WKHPubKey[:])
+	p2wkh160 := btcutil.Hash160(d.P2WKHPubKey[:])
 	return append([]byte{0}, p2wkh160...)
-}
-
-type StaticScriptParams struct {
-	RevocationPubKey PubKey
-	LocalDelayPubKey PubKey
-	CSVDelay         uint32
-
-	P2WKHPubKey      *PubKey
-	RemoteHtlcPubKey *PubKey
-	LocalHtlcPubKey  *PubKey
-}
-
-func (p *StaticScriptParams) EncodeStatic(w io.Writer) error {
-	_, err := w.Write(p.RevocationPubKey[:])
-	if err != nil {
-		return err
-	}
-
-	_, err = w.Write(p.LocalDelayPubKey[:])
-	if err != nil {
-		return err
-	}
-
-	return binary.Write(w, byteOrder, p.CSVDelay)
-}
-
-func (p *StaticScriptParams) DecodeStatic(r io.Reader) error {
-	_, err := r.Read(p.RevocationPubKey[:])
-	if err != nil {
-		return err
-	}
-
-	_, err = r.Read(p.LocalDelayPubKey[:])
-	if err != nil {
-		return err
-	}
-
-	return binary.Read(r, byteOrder, &p.CSVDelay)
-}
-
-func (p *StaticScriptParams) EncodeP2WKHPubKey(w io.Writer) error {
-	_, err := w.Write(p.P2WKHPubKey[:])
-	return err
-}
-
-func (p *StaticScriptParams) DecodeP2WKHPubKey(r io.Reader) error {
-	_, err := r.Read(p.P2WKHPubKey[:])
-	return err
-}
-
-func (p *StaticScriptParams) EncodeHtlcPubkeys(w io.Writer) error {
-	_, err := w.Write(p.RemoteHtlcPubKey[:])
-	if err != nil {
-		return err
-	}
-
-	_, err = w.Write(p.LocalHtlcPubKey[:])
-	return err
-}
-
-func (p *StaticScriptParams) DecodeHtlcPubkeys(r io.Reader) error {
-	p.RemoteHtlcPubKey = new(PubKey)
-	p.LocalHtlcPubKey = new(PubKey)
-
-	_, err := r.Read(p.RemoteHtlcPubKey[:])
-	if err != nil {
-		return err
-	}
-
-	_, err = r.Read(p.LocalHtlcPubKey[:])
-	return err
 }
 
 type Input interface {
@@ -252,10 +191,44 @@ func (d *Descriptor) DecodePlaintextBlob(r io.Reader, ver uint16) error {
 	}
 }
 
+// encodeV0 encodes the blob Descriptor
+//
+//
 func (d *Descriptor) encodeV0(w io.Writer) error {
-	err := binary.Write(w, byteOrder, d.HasP2WKHOutput)
+	// First, serialize the components pertinent to all sweeps:
+	//  - revocation pubkey
+	//  - local delay pubkey
+	//  - csv delay
+	_, err := w.Write(d.RevocationPubKey[:])
 	if err != nil {
 		return err
+	}
+
+	_, err = w.Write(d.LocalDelayPubKey[:])
+	if err != nil {
+		return err
+	}
+
+	err = binary.Write(w, byteOrder, d.CSVDelay)
+	if err != nil {
+		return err
+	}
+
+	// Next,
+	err = binary.Write(w, byteOrder, d.HasP2WKHOutput)
+	if err != nil {
+		return err
+	}
+
+	if d.HasP2WKHOutput {
+		if d.P2WKHPubKey == nil {
+			return ErrMissingP2WKHPubKey
+		}
+
+		_, err = w.Write(d.P2WKHPubKey[:])
+		if err != nil {
+			return err
+		}
 	}
 
 	err = binary.Write(w, byteOrder, d.NumOfferedHtlcs)
@@ -268,20 +241,17 @@ func (d *Descriptor) encodeV0(w io.Writer) error {
 		return err
 	}
 
-	err = d.Params.EncodeStatic(w)
-	if err != nil {
-		return err
-	}
+	if d.NumOfferedHtlcs > 0 || d.NumReceivedHtlcs > 0 {
+		if d.RemoteHtlcPubKey == nil || d.LocalHtlcPubKey == nil {
+			return ErrMissingHtlcPubKey
+		}
 
-	if d.HasP2WKHOutput {
-		err = d.Params.EncodeP2WKHPubKey(w)
+		_, err = w.Write(d.RemoteHtlcPubKey[:])
 		if err != nil {
 			return err
 		}
-	}
 
-	if d.NumOfferedHtlcs > 0 || d.NumReceivedHtlcs > 0 {
-		err = d.Params.EncodeHtlcPubkeys(w)
+		_, err = w.Write(d.LocalHtlcPubKey[:])
 		if err != nil {
 			return err
 		}
@@ -291,9 +261,32 @@ func (d *Descriptor) encodeV0(w io.Writer) error {
 }
 
 func (d *Descriptor) decodeV0(r io.Reader) error {
-	err := binary.Read(r, byteOrder, &d.HasP2WKHOutput)
+	_, err := r.Read(d.RevocationPubKey[:])
 	if err != nil {
 		return err
+	}
+
+	_, err = r.Read(d.LocalDelayPubKey[:])
+	if err != nil {
+		return err
+	}
+
+	err = binary.Read(r, byteOrder, &d.CSVDelay)
+	if err != nil {
+		return err
+	}
+
+	err = binary.Read(r, byteOrder, &d.HasP2WKHOutput)
+	if err != nil {
+		return err
+	}
+
+	if d.HasP2WKHOutput {
+		d.P2WKHPubKey = new(PubKey)
+		_, err = r.Read(d.P2WKHPubKey[:])
+		if err != nil {
+			return err
+		}
 	}
 
 	err = binary.Read(r, byteOrder, &d.NumOfferedHtlcs)
@@ -306,21 +299,16 @@ func (d *Descriptor) decodeV0(r io.Reader) error {
 		return err
 	}
 
-	err = d.Params.DecodeStatic(r)
-	if err != nil {
-		return err
-	}
+	if d.NumOfferedHtlcs > 0 || d.NumReceivedHtlcs > 0 {
+		d.RemoteHtlcPubKey = new(PubKey)
+		d.LocalHtlcPubKey = new(PubKey)
 
-	if d.HasP2WKHOutput {
-		d.Params.P2WKHPubKey = new(PubKey)
-		err = d.Params.DecodeP2WKHPubKey(r)
+		_, err = r.Read(d.RemoteHtlcPubKey[:])
 		if err != nil {
 			return err
 		}
-	}
 
-	if d.NumOfferedHtlcs > 0 || d.NumReceivedHtlcs > 0 {
-		err = d.Params.DecodeHtlcPubkeys(r)
+		_, err = r.Read(d.LocalHtlcPubKey[:])
 		if err != nil {
 			return err
 		}
