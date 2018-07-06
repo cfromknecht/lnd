@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"math"
 
 	"golang.org/x/crypto/chacha20poly1305"
 
@@ -30,6 +31,11 @@ var (
 	ErrMissingP2WKHPubKey = errors.New("descriptor is missing P2WKH pubkey")
 	ErrMissingHtlcPubKey  = errors.New("descriptor is missing remote or " +
 		"local HTLC pubkey")
+
+	ErrInvalidNumSigs = errors.New("unexpected number of signatures " +
+		"provided")
+
+	ErrSweepAddrTooBig = errors.New("sweep address len must be max uint8")
 )
 
 type PubKey [33]byte
@@ -48,6 +54,10 @@ type Descriptor struct {
 	NumReceivedHtlcs uint16
 	RemoteHtlcPubKey *PubKey
 	LocalHtlcPubKey  *PubKey
+
+	SweepAddress []byte
+
+	Sigs []lnwire.Sig
 }
 
 func (d *Descriptor) CommitToLocalScript() ([]byte, error) {
@@ -257,6 +267,38 @@ func (d *Descriptor) encodeV0(w io.Writer) error {
 		}
 	}
 
+	sweepAddrLen := len(d.SweepAddress)
+	if sweepAddrLen > math.MaxUint8 {
+		return ErrSweepAddrTooBig
+	}
+
+	err = binary.Write(w, byteOrder, uint8(sweepAddrLen))
+	if err != nil {
+		return err
+	}
+
+	_, err = w.Write(d.SweepAddress)
+	if err != nil {
+		return err
+	}
+
+	numSigs := 1 + d.NumOfferedHtlcs + d.NumReceivedHtlcs
+	if d.HasP2WKHOutput {
+		numSigs++
+	}
+
+	numSigsProvided := uint16(len(d.Sigs))
+	if numSigsProvided != numSigs {
+		return ErrInvalidNumSigs
+	}
+
+	for _, sig := range d.Sigs {
+		_, err = w.Write(sig[:])
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -283,6 +325,7 @@ func (d *Descriptor) decodeV0(r io.Reader) error {
 
 	if d.HasP2WKHOutput {
 		d.P2WKHPubKey = new(PubKey)
+
 		_, err = r.Read(d.P2WKHPubKey[:])
 		if err != nil {
 			return err
@@ -309,6 +352,33 @@ func (d *Descriptor) decodeV0(r io.Reader) error {
 		}
 
 		_, err = r.Read(d.LocalHtlcPubKey[:])
+		if err != nil {
+			return err
+		}
+	}
+
+	var sweepAddrLen uint8
+	err = binary.Read(r, byteOrder, &sweepAddrLen)
+	if err != nil {
+		return err
+	}
+
+	if sweepAddrLen > 0 {
+		d.SweepAddress = make([]byte, sweepAddrLen)
+		_, err = r.Read(d.SweepAddress[:])
+		if err != nil {
+			return err
+		}
+	}
+
+	numSigs := 1 + d.NumOfferedHtlcs + d.NumReceivedHtlcs
+	if d.HasP2WKHOutput {
+		numSigs++
+	}
+
+	d.Sigs = make([]lnwire.Sig, numSigs)
+	for i := uint16(0); i < numSigs; i++ {
+		_, err = r.Read(d.Sigs[i][:])
 		if err != nil {
 			return err
 		}
