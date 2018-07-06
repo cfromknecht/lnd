@@ -25,9 +25,10 @@ var _ Message = (*SessionInit)(nil)
 // This is part of the wtwire.Message interface.
 func (m *SessionInit) Decode(r io.Reader, pver uint32) error {
 	return readElements(r,
+		&m.Version,
+		&m.MaxUpdates,
 		&m.RewardRate,
 		&m.SweepFeeRate,
-		&m.MaxUpdates,
 	)
 }
 
@@ -37,9 +38,10 @@ func (m *SessionInit) Decode(r io.Reader, pver uint32) error {
 // This is part of the wtwire.Message interface.
 func (m *SessionInit) Encode(w io.Writer, pver uint32) error {
 	return writeElements(w,
+		m.Version,
+		m.MaxUpdates,
 		m.RewardRate,
 		m.SweepFeeRate,
-		m.MaxUpdates,
 	)
 }
 
