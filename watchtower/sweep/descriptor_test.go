@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/watchtower/sweep"
 )
 
@@ -22,6 +23,14 @@ func newPubKey(i uint64) *sweep.PubKey {
 	return pk
 }
 
+func makeNSigs(n int) []lnwire.Sig {
+	sigs := make([]lnwire.Sig, n)
+	for i := range sigs {
+		binary.BigEndian.PutUint64(sigs[i][:], uint64(i))
+	}
+	return sigs
+}
+
 var descriptorTests = []struct {
 	name             string
 	encVersion       uint16
@@ -35,6 +44,7 @@ var descriptorTests = []struct {
 	numReceivedHtlcs uint16
 	remoteHtlcPubKey *sweep.PubKey
 	localHtlcPubKey  *sweep.PubKey
+	sigs             []lnwire.Sig
 	encErr           error
 	decErr           error
 }{
@@ -45,6 +55,7 @@ var descriptorTests = []struct {
 		revPubKey:   makePubKey(0),
 		delayPubKey: makePubKey(1),
 		csvDelay:    144,
+		sigs:        makeNSigs(1),
 	},
 	{
 		name:        "unknown encrypt version",
@@ -62,6 +73,7 @@ var descriptorTests = []struct {
 		revPubKey:   makePubKey(0),
 		delayPubKey: makePubKey(1),
 		csvDelay:    144,
+		sigs:        makeNSigs(1),
 		decErr:      sweep.ErrUnknownBlobVersion,
 	},
 	{
@@ -83,6 +95,7 @@ var descriptorTests = []struct {
 		csvDelay:       144,
 		hasP2wkhPubKey: true,
 		p2wkhPubKey:    newPubKey(2),
+		sigs:           makeNSigs(2),
 	},
 	{
 		name:            "to-local, p2wkh, and htlc outputs",
@@ -132,6 +145,7 @@ var descriptorTests = []struct {
 		p2wkhPubKey:      newPubKey(2),
 		numReceivedHtlcs: 1,
 		localHtlcPubKey:  newPubKey(3),
+		sigs:             makeNSigs(3),
 		encErr:           sweep.ErrMissingHtlcPubKey,
 	},
 	{
@@ -146,6 +160,7 @@ var descriptorTests = []struct {
 		numReceivedHtlcs: 1,
 		remoteHtlcPubKey: newPubKey(3),
 		localHtlcPubKey:  newPubKey(4),
+		sigs:             makeNSigs(3),
 	},
 	{
 		name:             "to-local, p2wkh, and htlc outputs",
@@ -160,6 +175,7 @@ var descriptorTests = []struct {
 		numReceivedHtlcs: 2,
 		remoteHtlcPubKey: newPubKey(3),
 		localHtlcPubKey:  newPubKey(4),
+		sigs:             makeNSigs(6),
 	},
 	{
 		name:             "to-local, and htlc outputs",
@@ -172,6 +188,7 @@ var descriptorTests = []struct {
 		numReceivedHtlcs: 2,
 		remoteHtlcPubKey: newPubKey(3),
 		localHtlcPubKey:  newPubKey(4),
+		sigs:             makeNSigs(5),
 	},
 }
 
@@ -187,6 +204,7 @@ func TestSweepDescriptorEncryptDecrypt(t *testing.T) {
 			NumReceivedHtlcs: test.numReceivedHtlcs,
 			RemoteHtlcPubKey: test.remoteHtlcPubKey,
 			LocalHtlcPubKey:  test.localHtlcPubKey,
+			Sigs:             test.sigs,
 		}
 
 		// Generate a random encryption key for the blob. The key is
