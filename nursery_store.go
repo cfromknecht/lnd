@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/coreos/bbolt"
-	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/coreos/bbolt"
+	"github.com/lightningnetwork/lnd/channeldb"
 )
 
 //	              Overview of Nursery Store Storage Hierarchy
@@ -390,7 +390,7 @@ func (ns *nurseryStore) CribToKinder(bby *babyOutput) error {
 		// Now, compute the height at which this kidOutput's CSV delay
 		// will expire.  This is done by adding the required delay to
 		// the block height at which the output was confirmed.
-		maturityHeight := bby.ConfHeight() + bby.BlocksToMaturity()
+		maturityHeight := bby.ConfHeight() + bby.BlocksToMaturity() - 1
 
 		// Retrieve or create a height-channel bucket corresponding to
 		// the kidOutput's maturity height.
@@ -475,7 +475,7 @@ func (ns *nurseryStore) PreschoolToKinder(kid *kidOutput) error {
 			//
 			// Compute the maturity height, by adding the output's
 			// CSV delay to its confirmation height.
-			maturityHeight = kid.ConfHeight() + kid.BlocksToMaturity()
+			maturityHeight = kid.ConfHeight() + kid.BlocksToMaturity() - 1
 		}
 
 		// In the case of a Late Registration, we've already graduated
