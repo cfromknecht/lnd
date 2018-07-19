@@ -22,18 +22,18 @@ import (
 	"crypto/sha256"
 	prand "math/rand"
 
-	"github.com/btcsuite/btclog"
-	"github.com/davecgh/go-spew/spew"
-	"github.com/go-errors/errors"
-	"github.com/lightningnetwork/lnd/lnrpc"
-	"github.com/lightningnetwork/lnd/lntest"
-	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/integration/rpctest"
 	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btclog"
 	"github.com/btcsuite/btcutil"
+	"github.com/davecgh/go-spew/spew"
+	"github.com/go-errors/errors"
+	"github.com/lightningnetwork/lnd/lnrpc"
+	"github.com/lightningnetwork/lnd/lntest"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
@@ -1594,9 +1594,9 @@ func assertCommitmentMaturity(t *harnessTest,
 	forceClose *lnrpc.PendingChannelsResponse_ForceClosedChannel,
 	maturityHeight uint32, blocksTilMaturity int32) {
 
-	if forceClose.MaturityHeight != maturityHeight {
+	if forceClose.MaturityHeight != maturityHeight+1 {
 		t.Fatalf("expected commitment maturity height to be %d, "+
-			"found %d instead", maturityHeight,
+			"found %d instead", maturityHeight+1,
 			forceClose.MaturityHeight)
 	}
 	if forceClose.BlocksTilMaturity != blocksTilMaturity {
@@ -1799,9 +1799,9 @@ func testChannelForceClosure(net *lntest.NetworkHarness, t *harnessTest) {
 	// for incubating two-stage htlcs.
 	var (
 		startHeight           = uint32(curHeight)
-		commCsvMaturityHeight = startHeight + 1 + defaultCSV
+		commCsvMaturityHeight = startHeight + defaultCSV
 		htlcExpiryHeight      = startHeight + defaultCLTV
-		htlcCsvMaturityHeight = startHeight + defaultCLTV + 1 + defaultCSV
+		htlcCsvMaturityHeight = startHeight + defaultCLTV + defaultCSV + 1
 	)
 
 	time.Sleep(200 * time.Millisecond)
@@ -1915,7 +1915,7 @@ func testChannelForceClosure(net *lntest.NetworkHarness, t *harnessTest) {
 	// For the persistence test, we generate three blocks, then trigger
 	// a restart and then generate the final block that should trigger
 	// the creation of the sweep transaction.
-	if _, err := net.Miner.Node.Generate(defaultCSV - 1); err != nil {
+	if _, err := net.Miner.Node.Generate(defaultCSV - 2); err != nil {
 		t.Fatalf("unable to mine blocks: %v", err)
 	}
 
@@ -1938,7 +1938,7 @@ func testChannelForceClosure(net *lntest.NetworkHarness, t *harnessTest) {
 	// 1 block left before its CSV delay expires. In total, we have mined
 	// exactly defaultCSV blocks, so the htlc outputs should also reflect
 	// that this many blocks have passed.
-	assertCommitmentMaturity(t, forceClose, commCsvMaturityHeight, 1)
+	assertCommitmentMaturity(t, forceClose, commCsvMaturityHeight, 2)
 
 	// All funds should still be shown in limbo.
 	if forceClose.LimboBalance == 0 {
@@ -2022,7 +2022,7 @@ func testChannelForceClosure(net *lntest.NetworkHarness, t *harnessTest) {
 	// of blocks we have generated since adding it to the nursery, and take
 	// an additional block off so that we end up one block shy of the expiry
 	// height.
-	cltvHeightDelta := defaultCLTV - defaultCSV - 2 - 1
+	cltvHeightDelta := defaultCLTV - defaultCSV - 1 - 1
 
 	// Advance the blockchain until just before the CLTV expires, nothing
 	// exciting should have happened during this time.
@@ -2128,7 +2128,7 @@ func testChannelForceClosure(net *lntest.NetworkHarness, t *harnessTest) {
 	}
 
 	// Advance the chain until just before the 2nd-layer CSV delays expire.
-	blockHash, err = net.Miner.Node.Generate(defaultCSV - 1)
+	blockHash, err = net.Miner.Node.Generate(defaultCSV - 2)
 	if err != nil {
 		t.Fatalf("unable to generate block: %v", err)
 	}
@@ -2229,7 +2229,7 @@ func testChannelForceClosure(net *lntest.NetworkHarness, t *harnessTest) {
 	forceClose = findForceClosedChannel(t, pendingChanResp, &op)
 	assertPendingChannelNumHtlcs(t, forceClose, numInvoices)
 	assertPendingHtlcStageAndMaturity(t, forceClose, 2,
-		htlcCsvMaturityHeight, 0)
+		htlcCsvMaturityHeight, 1)
 
 	// Generate the final block that sweeps all htlc funds into the user's
 	// wallet.
@@ -2809,7 +2809,7 @@ func updateChannelPolicy(t *harnessTest, node *lntest.HarnessNode,
 
 	// Wait for listener node to receive the channel update from node.
 	ctxt, _ = context.WithTimeout(ctxb, timeout)
-	listenerUpdates, aQuit := subscribeGraphNotifications(t, ctxt, 
+	listenerUpdates, aQuit := subscribeGraphNotifications(t, ctxt,
 		listenerNode)
 	defer close(aQuit)
 
@@ -2980,8 +2980,8 @@ func testMultiHopPayments(net *lntest.NetworkHarness, t *harnessTest) {
 
 	time.Sleep(time.Millisecond * 50)
 
-	// Set the fee policies of the Alice -> Bob and the Dave -> Alice 
-	// channel edges to relatively large non default values. This makes it 
+	// Set the fee policies of the Alice -> Bob and the Dave -> Alice
+	// channel edges to relatively large non default values. This makes it
 	// possible to pick up more subtle fee calculation errors.
 	updateChannelPolicy(t, net.Alice, chanPointAlice, 1000, 100000,
 		144, carol)
@@ -3017,10 +3017,10 @@ func testMultiHopPayments(net *lntest.NetworkHarness, t *harnessTest) {
 	assertAmountPaid(t, ctxb, "Alice(local) => Bob(remote)", net.Alice,
 		aliceFundPoint, expectedAmountPaidAtoB, int64(0))
 
-	// To forward a payment of 1000 sat, Alice is charging a fee of 
+	// To forward a payment of 1000 sat, Alice is charging a fee of
 	// 1 sat + 10% = 101 sat.
 	const expectedFeeAlice = 5 * 101
-	
+
 	// Dave needs to pay what Alice pays plus Alice's fee.
 	expectedAmountPaidDtoA := expectedAmountPaidAtoB + expectedFeeAlice
 
@@ -3029,7 +3029,7 @@ func testMultiHopPayments(net *lntest.NetworkHarness, t *harnessTest) {
 	assertAmountPaid(t, ctxb, "Dave(local) => Alice(remote)", dave,
 		daveFundPoint, expectedAmountPaidDtoA, int64(0))
 
-	// To forward a payment of 1101 sat, Dave is charging a fee of 
+	// To forward a payment of 1101 sat, Dave is charging a fee of
 	// 5 sat + 15% = 170.15 sat. This is rounded down in rpcserver to 170.
 	const expectedFeeDave = 5 * 170
 
@@ -4860,7 +4860,7 @@ func testFailingChannel(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// Mine enough blocks for Alice to sweep her funds from the force
 	// closed channel.
-	_, err = net.Miner.Node.Generate(defaultCSV)
+	_, err = net.Miner.Node.Generate(defaultCSV - 1)
 	if err != nil {
 		t.Fatalf("unable to generate blocks: %v", err)
 	}
@@ -7525,7 +7525,7 @@ func testMultiHopReceiverChainClaim(net *lntest.NetworkHarness, t *harnessTest) 
 
 	// If we mine 4 additional blocks, then both outputs should now be
 	// mature.
-	if _, err := net.Miner.Node.Generate(defaultCSV); err != nil {
+	if _, err := net.Miner.Node.Generate(defaultCSV - 1); err != nil {
 		t.Fatalf("unable to generate blocks: %v", err)
 	}
 
@@ -8221,7 +8221,7 @@ func testMultiHopHtlcLocalChainClaim(net *lntest.NetworkHarness, t *harnessTest)
 
 	// If we then mine 4 additional blocks, Bob and Carol should sweep the
 	// outputs destined for them.
-	if _, err := net.Miner.Node.Generate(defaultCSV); err != nil {
+	if _, err := net.Miner.Node.Generate(defaultCSV - 1); err != nil {
 		t.Fatalf("unable to generate block: %v", err)
 	}
 
@@ -8408,7 +8408,7 @@ func testMultiHopHtlcRemoteChainClaim(net *lntest.NetworkHarness, t *harnessTest
 
 	// If we then mine 4 additional blocks, Bob should pull the output
 	// destined for him.
-	if _, err := net.Miner.Node.Generate(defaultCSV); err != nil {
+	if _, err := net.Miner.Node.Generate(defaultCSV - 1); err != nil {
 		t.Fatalf("unable to generate block: %v", err)
 	}
 
