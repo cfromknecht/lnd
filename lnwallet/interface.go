@@ -42,6 +42,8 @@ var (
 	// transaction.
 	ErrDoubleSpend = errors.New("Transaction rejected: output already spent")
 
+	ErrInsufficientFee = errors.New("Transaction rejected: insufficient fee")
+
 	// ErrNotMine is an error denoting that a WalletController instance is
 	// unable to spend a specified output.
 	ErrNotMine = errors.New("the passed output doesn't belong to the wallet")
