@@ -741,6 +741,47 @@ func (u *utxoNursery) regraduateClass(classHeight uint32) error {
 			utxnLog.Errorf("Failed to re-register for kindergarten "+
 				"sweep transaction at height=%d: %v",
 				classHeight, err)
+
+			if err != lnwallet.ErrInsufficientFee {
+				return err
+			}
+		}
+
+		// The fee on the previously finalized txn was not enough, we'll
+		// make one more attempt to resign and broadcast a sweep. This
+		// could easily happen due to prior errors in expected script
+		// sizes. If the issue still persists, there is likely a deeper
+		// issue.
+		finalTx, err = u.createSweepTx(kgtnOutputs, classHeight)
+		if err != nil {
+			utxnLog.Errorf("Failed to create new sweep txn at "+
+				"height=%d", classHeight)
+			return err
+		}
+
+		// Log the refinalized transaction.
+		utxnLog.Infof("Refinalized kindergarten at height=%d: %v",
+			classHeight, spew.Sdump(finalTx))
+
+		// Persist the refinalized kindergarten sweep txn to the nursery
+		// store. Since we received a fee insufficient error prior, we
+		// will just replace the old one on the assumption that the
+		// previously finalized transaction does not leak, and will
+		// never confirm (at least before this one).
+		err = u.cfg.Store.FinalizeKinder(classHeight, finalTx)
+		if err != nil {
+			utxnLog.Errorf("Failed to finalize kindergarten at "+
+				"height=%d", classHeight)
+
+			return err
+		}
+
+		// Try again to publish and sweep this resigned txn.
+		err = u.sweepMatureOutputs(classHeight, finalTx, kgtnOutputs)
+		if err != nil {
+			utxnLog.Errorf("Failed to re-register for refinalized "+
+				"kindergarten sweep transaction at "+
+				"height=%d: %v", classHeight, err)
 			return err
 		}
 	}
