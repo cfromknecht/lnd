@@ -1365,8 +1365,6 @@ func (ns *nurseryStore) getLastFinalizedHeight(tx *bolt.Tx) (uint32, error) {
 func (ns *nurseryStore) finalizeKinder(tx *bolt.Tx, height uint32,
 	finalTx *wire.MsgTx) error {
 
-	// TODO(conner) ensure height is greater that current finalized height.
-
 	// 1. Write the last finalized height to the chain bucket.
 
 	// Ensure that the chain bucket for this nursery store exists.
@@ -1375,14 +1373,24 @@ func (ns *nurseryStore) finalizeKinder(tx *bolt.Tx, height uint32,
 		return err
 	}
 
-	// Serialize the provided last-finalized height, and store it in the
-	// top-level chain bucket for this nursery store.
-	var lastHeightBytes [4]byte
-	byteOrder.PutUint32(lastHeightBytes[:], height)
-
-	err = chainBucket.Put(lastFinalizedHeightKey, lastHeightBytes[:])
+	// Only update the last finalized height if it exceeds our previous,
+	// ensuring we never rewind the last finalized height.
+	lastFinalized, err := ns.getLastFinalizedHeight(tx)
 	if err != nil {
 		return err
+	}
+
+	if height > lastFinalized {
+		// Serialize the provided last-finalized height, and store it in
+		// the top-level chain bucket for this nursery store.
+		var lastHeightBytes [4]byte
+		byteOrder.PutUint32(lastHeightBytes[:], height)
+
+		err = chainBucket.Put(lastFinalizedHeightKey,
+			lastHeightBytes[:])
+		if err != nil {
+			return err
+		}
 	}
 
 	// 2. Write the finalized txn in the appropriate height bucket.
