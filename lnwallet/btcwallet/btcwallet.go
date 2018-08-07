@@ -428,6 +428,9 @@ func (b *BtcWallet) PublishTransaction(tx *wire.MsgTx) error {
 				// is missing or already spent.
 				return lnwallet.ErrDoubleSpend
 			}
+			if strings.Contains(err.Error(), "min relay fee not met") {
+				return lnwallet.ErrInsufficientFee
+			}
 
 		case *chain.NeutrinoClient:
 			if strings.Contains(err.Error(), "already have") {
