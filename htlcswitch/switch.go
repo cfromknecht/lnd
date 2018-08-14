@@ -287,7 +287,7 @@ func New(cfg Config, currentHeight uint32) (*Switch, error) {
 		cfg:               &cfg,
 		circuits:          circuitMap,
 		paymentSequencer:  sequencer,
-		control:           NewPaymentControl(cfg.DB),
+		control:           NewPaymentControl(false, cfg.DB),
 		linkIndex:         make(map[lnwire.ChannelID]ChannelLink),
 		mailOrchestrator:  newMailOrchestrator(),
 		forwardingIndex:   make(map[lnwire.ShortChannelID]ChannelLink),
@@ -854,7 +854,8 @@ func (s *Switch) handleLocalDispatch(pkt *htlcPacket) error {
 		// Persistently mark that a payment to this payment hash
 		// succeeded. This will prevent us from ever making another
 		// payment to this hash.
-		if err := s.control.Success(pkt.circuit.PaymentHash); err != nil {
+		err := s.control.Success(pkt.circuit.PaymentHash)
+		if err != nil && err != ErrPaymentAlreadyCompleted {
 			return err
 		}
 
@@ -866,7 +867,8 @@ func (s *Switch) handleLocalDispatch(pkt *htlcPacket) error {
 		// Persistently mark that a payment to this payment hash failed.
 		// This will permit us to make another attempt at a successful
 		// payment.
-		if err := s.control.Fail(pkt.circuit.PaymentHash); err != nil {
+		err := s.control.Fail(pkt.circuit.PaymentHash)
+		if err != nil && err != ErrPaymentAlreadyCompleted {
 			return err
 		}
 
