@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -599,9 +598,9 @@ func (s *Switch) ForwardPackets(linkQuit chan struct{},
 			// keystone to signal that this circuit should be
 			// atomically opened upon being committed within the
 			// circuit map.
-			if packet.outgoingChanID == math.MaxUint64 {
+			if packet.outgoingChanID == switchSettleHop {
 				circuit.Outgoing = &CircuitKey{
-					ChanID: packet.outgoingChanID,
+					ChanID: switchSettleHop,
 					HtlcID: packet.outgoingHTLCID,
 				}
 			}
@@ -640,7 +639,14 @@ func (s *Switch) ForwardPackets(linkQuit chan struct{},
 	for _, packet := range addBatch {
 		switch {
 		case len(actions.Adds) > 0 && packet.circuit == actions.Adds[0]:
-			addedPackets = append(addedPackets, packet)
+			// We only need to forward packets through the switch if
+			// they contain an outgoing channel id that isn't
+			// intended to be a switch settled payment. Since these
+			// are atomically opened at the time they are committed,
+			// we can drop them here and await a response.
+			if packet.outgoingChanID != switchSettleHop {
+				addedPackets = append(addedPackets, packet)
+			}
 			actions.Adds = actions.Adds[1:]
 
 		case len(actions.Drops) > 0 && packet.circuit == actions.Drops[0]:
