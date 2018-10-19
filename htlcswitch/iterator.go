@@ -3,6 +3,7 @@ package htlcswitch
 import (
 	"encoding/binary"
 	"io"
+	"math"
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/lightningnetwork/lightning-onion"
@@ -45,6 +46,11 @@ var (
 	// sourceHop is a sentinel value denoting that an incoming HTLC is
 	// initiated by our own switch.
 	sourceHop lnwire.ShortChannelID
+
+	// switchSettleHop is a sentinel value denoting that an incoming HTLC is
+	// intended to be an exit settle, but that we will defer settlement
+	// until a later point by the switch.
+	switchSettleHop = lnwire.NewShortChanIDFromInt(math.MaxUint64)
 )
 
 // ForwardingInfo contains all the information that is necessary to forward and
