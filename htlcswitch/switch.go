@@ -283,7 +283,7 @@ type Switch struct {
 // New creates the new instance of htlc switch.
 func New(cfg Config, currentHeight uint32) (*Switch, error) {
 	circuitMap, err := NewCircuitMap(&CircuitMapConfig{
-		DB:                    cfg.DB,
+		DB: cfg.DB,
 		ExtractErrorEncrypter: cfg.ExtractErrorEncrypter,
 	})
 	if err != nil {
@@ -593,6 +593,19 @@ func (s *Switch) ForwardPackets(linkQuit chan struct{},
 		switch htlc := packet.htlc.(type) {
 		case *lnwire.UpdateAddHTLC:
 			circuit := newPaymentCircuit(&htlc.PaymentHash, packet)
+
+			// If the outgoing channel id is equal to the
+			// switch-settled sentinel value, we'll construct the
+			// keystone to signal that this circuit should be
+			// atomically opened upon being committed within the
+			// circuit map.
+			if packet.outgoingChanID == math.MaxUint64 {
+				circuit.Outgoing = &CircuitKey{
+					ChanID: packet.outgoingChanID,
+					HtlcID: packet.outgoingHTLCID,
+				}
+			}
+
 			packet.circuit = circuit
 			circuits = append(circuits, circuit)
 			addBatch = append(addBatch, packet)
@@ -1015,36 +1028,10 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 	// payment circuit within our internal state so we can properly forward
 	// the ultimate settle message back latter.
 	case *lnwire.UpdateAddHTLC:
-		switch {
-		case packet.incomingChanID == sourceHop:
+		if packet.incomingChanID == sourceHop {
 			// A blank incomingChanID indicates that this is
 			// a pending user-initiated payment.
 			return s.handleLocalDispatch(packet)
-
-		case packet.outgoingChanID == math.MaxUint64:
-			// Special outgoing channel ID, so go ahead and create
-			// both the circuit as well as the keystone.
-			//
-			// TODO: need method to do this all in one, under
-			// single db tx so it isn't cancelled back on restart
-			// when trying to trim
-			inKey := newPaymentCircuit(
-				htlc.PaymentHash, packet,
-			)
-			s.circuits.CommitCircuits(inKey)
-			s.circuits.OpenCircuits(KeyStone{
-				InKey: inKey,
-				OutKey: CircuitKey{
-					ChanID: packet.outgoingChanID,
-					HtlcID: packet.outgoingHTLCID,
-				},
-			})
-
-			// Now since we have a full circuit, we can use the
-			// existing pipeline on the other direction for fail
-			// and settle below, using the contract resolution
-			// message stuffs.
-			return nil
 		}
 
 		s.indexMtx.RLock()
