@@ -589,6 +589,41 @@ func (cm *circuitMap) CommitCircuits(circuits ...*PaymentCircuit) (
 			continue
 		}
 
+		// If a proposed circuit already has a keystone set, we will
+		// attempt to atomically open the circuit in the same attempt
+		// that we commit it.
+		if circuit.HasKeystone() {
+			// If this circuit has already been opened, fail or drop
+			// depending on if is being registered by the same
+			// incoming channel id.
+			if openCircuit, ok := cm.opened[circuit.OutKey()]; ok {
+				switch openCircuit.Incoming {
+
+				// If the open circuit has the same incoming
+				// circuit key as the proposed circuit, we
+				// assume the link has flapped. We drop the
+				// packet to and wait for the switch to settle
+				// this circuit.
+				case circuit.Incoming:
+					drops = append(drops, circuit)
+
+				// Otherwise, this is a concurrent proposal from
+				// a different circuit key. We fail the packet
+				// back to ensure we don't accept a duplicate
+				// payment.
+				default:
+					fails = append(fails, circuit)
+					addFails = append(addFails, circuit)
+				}
+
+				continue
+			}
+
+			// Otherwise, this is the first attempt to open this
+			// circuit, so we open the circuit in memory.
+			cm.opened[circuit.OutKey()] = circuit
+		}
+
 		cm.pending[inKey] = circuit
 		adds = append(adds, circuit)
 		addFails = append(addFails, circuit)
@@ -621,6 +656,11 @@ func (cm *circuitMap) CommitCircuits(circuits ...*PaymentCircuit) (
 			return ErrCorruptedCircuitMap
 		}
 
+		keystoneBkt := tx.Bucket(circuitKeystoneKey)
+		if keystoneBkt == nil {
+			return ErrCorruptedCircuitMap
+		}
+
 		for i, circuit := range adds {
 			inKeyBytes := circuit.InKey().Bytes()
 			circuitBytes := bs[i].Bytes()
@@ -628,6 +668,16 @@ func (cm *circuitMap) CommitCircuits(circuits ...*PaymentCircuit) (
 			err := circuitBkt.Put(inKeyBytes, circuitBytes)
 			if err != nil {
 				return err
+			}
+
+			// If the circuit has a keystone, we will also open the
+			// circuit within the same db transaction.
+			if circuit.HasKeystone() {
+				outKeyBytes := circuit.OutKey().Bytes()
+				err := keystoneBkt.Put(outKeyBytes, inKeyBytes)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -646,6 +696,10 @@ func (cm *circuitMap) CommitCircuits(circuits ...*PaymentCircuit) (
 	// write failed.
 	cm.mtx.Lock()
 	for _, circuit := range adds {
+		// Undo any atomically opened circuits.
+		if circuit.HasKeystone() {
+			delete(cm.opened, circuit.OutKey())
+		}
 		delete(cm.pending, circuit.InKey())
 	}
 	cm.mtx.Unlock()
