@@ -2399,16 +2399,14 @@ func (l *channelLink) processRemoteAdds(fwdPkg *channeldb.FwdPkg,
 			expectedHeight := heightNow + minCltvDelta
 			switch {
 
-			case !l.cfg.DebugHTLC && fwdInfo.OutgoingCTLV < expectedHeight:
+			case !l.cfg.DebugHTLC && pd.Timeout < expectedHeight:
 				log.Errorf("Onion payload of incoming "+
 					"htlc(%x) has incorrect time-lock: "+
 					"expected %v, got %v",
 					pd.RHash[:], expectedHeight,
 					fwdInfo.OutgoingCTLV)
 
-				failure := lnwire.NewFinalIncorrectCltvExpiry(
-					fwdInfo.OutgoingCTLV,
-				)
+				failure := lnwire.FailFinalExpiryTooSoon{}
 				l.sendHTLCError(
 					pd.HtlcIndex, failure, obfuscator, pd.SourceRef,
 				)
