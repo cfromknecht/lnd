@@ -548,6 +548,61 @@ func TestExitNodeTimelockPayloadMismatch(t *testing.T) {
 	}
 }
 
+// TestExitNodeTimelockTooSoon tests that when an exit node receives an
+// incoming HTLC, if the time lock encoded in the payload of the forwarded HTLC
+// is too close to the present to safely accept, then the HTLC will be rejected
+// with a FinalExpiryTooSoon error.
+func TestExitNodeTimelockTooSoon(t *testing.T) {
+	t.Parallel()
+
+	channels, cleanUp, _, err := createClusterChannels(
+		btcutil.SatoshiPerBitcoin*5,
+		btcutil.SatoshiPerBitcoin*5)
+	if err != nil {
+		t.Fatalf("unable to create channel: %v", err)
+	}
+	defer cleanUp()
+
+	n := newThreeHopNetwork(t, channels.aliceToBob, channels.bobToAlice,
+		channels.bobToCarol, channels.carolToBob, testStartingHeight)
+	if err := n.start(); err != nil {
+		t.Fatal(err)
+	}
+	defer n.stop()
+
+	const amount = btcutil.SatoshiPerBitcoin
+	htlcAmt, htlcExpiry, hops := generateHops(amount,
+		testStartingHeight, n.firstBobChannelLink)
+
+	// In order to trigger the receiving node to think the HTLC is too close
+	// to the presenet, subtract one from the total expiry applied to the
+	// route. Since the route is only one hop, Bob will see this value
+	// encoded in the HTLC delivered to him, and realize it is too close the
+	// present.
+	htlcExpiry -= 1
+
+	firstHop := n.firstBobChannelLink.ShortChanID()
+	_, err = n.makePayment(
+		n.aliceServer, n.bobServer, firstHop, hops, amount, htlcAmt,
+		htlcExpiry,
+	).Wait(30 * time.Second)
+	if err == nil {
+		t.Fatalf("payment should have failed but didn't")
+	}
+
+	ferr, ok := err.(*ForwardingError)
+	if !ok {
+		t.Fatalf("expected a ForwardingError, instead got: %T", err)
+	}
+
+	switch ferr.FailureMessage.(type) {
+	case *lnwire.FailFinalExpiryTooSoon:
+	default:
+		t.Fatalf("incorrect error, expected final expiry too soon, "+
+			"instead have: %v", err)
+	}
+}
+
 // TestExitNodeAmountPayloadMismatch tests that when an exit node receives an
 // incoming HTLC, if the amount encoded in the onion payload of the forwarded
 // HTLC doesn't match the expected payment value, then the HTLC will be
