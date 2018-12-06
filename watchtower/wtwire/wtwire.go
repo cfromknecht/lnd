@@ -2,6 +2,7 @@ package wtwire
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 
@@ -47,6 +48,13 @@ func WriteElement(w io.Writer, element interface{}) error {
 			return err
 		}
 
+	case *uint32:
+		var b [4]byte
+		binary.BigEndian.PutUint32(b[:], *e)
+		if _, err := w.Write(b[:]); err != nil {
+			return err
+		}
+
 	case uint64:
 		var b [8]byte
 		binary.BigEndian.PutUint64(b[:], e)
@@ -71,6 +79,12 @@ func WriteElement(w io.Writer, element interface{}) error {
 
 	case []byte:
 		if err := wire.WriteVarBytes(w, 0, e); err != nil {
+			return err
+		}
+
+	case *[]byte:
+		_, err := w.Write(*e)
+		if err != nil {
 			return err
 		}
 
@@ -135,7 +149,8 @@ func WriteElements(w io.Writer, elements ...interface{}) error {
 
 // ReadElement is a one-stop utility function to deserialize any datastructure
 // encoded using the serialization format of lnwire.
-func ReadElement(r io.Reader, element interface{}) error {
+func ReadElement(r io.Reader, element interface{}, length *uint16) error {
+	var expSize uint16
 	switch e := element.(type) {
 	case *uint8:
 		var b [1]uint8
@@ -143,6 +158,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 			return err
 		}
 		*e = b[0]
+		expSize = 1
 
 	case *uint16:
 		var b [2]byte
@@ -150,6 +166,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 			return err
 		}
 		*e = binary.BigEndian.Uint16(b[:])
+		expSize = 2
 
 	case *blob.Type:
 		var b [2]byte
@@ -164,6 +181,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 			return err
 		}
 		*e = binary.BigEndian.Uint32(b[:])
+		expSize = 4
 
 	case *uint64:
 		var b [8]byte
@@ -171,28 +189,40 @@ func ReadElement(r io.Reader, element interface{}) error {
 			return err
 		}
 		*e = binary.BigEndian.Uint64(b[:])
+		expSize = 8
 
 	case *[16]byte:
 		if _, err := io.ReadFull(r, e[:]); err != nil {
 			return err
 		}
+		expSize = 16
 
 	case *[32]byte:
 		if _, err := io.ReadFull(r, e[:]); err != nil {
 			return err
 		}
+		expSize = 32
 
 	case *[33]byte:
 		if _, err := io.ReadFull(r, e[:]); err != nil {
 			return err
 		}
+		expSize = 33
 
 	case *[]byte:
-		bytes, err := wire.ReadVarBytes(r, 0, 66000, "[]byte")
-		if err != nil {
-			return err
+		if length != nil {
+			*e = make([]byte, *length)
+			if _, err := io.ReadFull(r, (*e)[:]); err != nil {
+				return err
+			}
+			expSize = *length
+		} else {
+			bytes, err := wire.ReadVarBytes(r, 0, 66000, "[]byte")
+			if err != nil {
+				return err
+			}
+			*e = bytes
 		}
-		*e = bytes
 
 	case *lnwallet.SatPerKWeight:
 		var b [8]byte
@@ -200,6 +230,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 			return err
 		}
 		*e = lnwallet.SatPerKWeight(binary.BigEndian.Uint64(b[:]))
+		expSize = 8
 
 	case *ErrorCode:
 		var b [2]byte
@@ -207,6 +238,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 			return err
 		}
 		*e = ErrorCode(binary.BigEndian.Uint16(b[:]))
+		expSize = 2
 
 	case *chainhash.Hash:
 		if _, err := io.ReadFull(r, e[:]); err != nil {
@@ -233,9 +265,14 @@ func ReadElement(r io.Reader, element interface{}) error {
 			return err
 		}
 		*e = pubKey
+		expSize = 33
 
 	default:
 		return fmt.Errorf("Unknown type in ReadElement: %T", e)
+	}
+
+	if length != nil && *length != expSize {
+		return errors.New("short read")
 	}
 
 	return nil
@@ -246,7 +283,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 // function.
 func ReadElements(r io.Reader, elements ...interface{}) error {
 	for _, element := range elements {
-		err := ReadElement(r, element)
+		err := ReadElement(r, element, nil)
 		if err != nil {
 			return err
 		}
