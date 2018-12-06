@@ -245,6 +245,8 @@ type config struct {
 
 	RejectPush bool `long:"rejectpush" description:"If true, lnd will not accept channel opening requests with non-zero push amounts. This should prevent accidental pushes to merchant nodes."`
 
+	MigrationDryRun bool `long:"migration-dry-run" description:"If true, lnd will abort committing a migration if it would otherwise have been successful. This leaves the database unmodified, and still compatible with the previously active version of lnd."`
+
 	net tor.Net
 
 	Routing *routing.Conf `group:"routing" namespace:"routing"`
