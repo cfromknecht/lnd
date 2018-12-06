@@ -160,9 +160,14 @@ func lndMain() error {
 
 	// Open the channeldb, which is dedicated to storing channel, and
 	// network related metadata.
-	chanDB, err := channeldb.Open(graphDir)
-	if err != nil {
-		ltndLog.Errorf("unable to open channeldb: %v", err)
+	chanDB, err := channeldb.Open(graphDir, cfg.MigrationDryRun)
+	switch {
+	case err == channeldb.ErrDryRunMigrationOK:
+		ltndLog.Errorf("%v, exiting", err)
+		return nil
+
+	case err != nil:
+		ltndLog.Errorf("Unable to open channeldb: %v", err)
 		return err
 	}
 	defer chanDB.Close()
