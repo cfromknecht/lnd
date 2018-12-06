@@ -22,6 +22,12 @@ const (
 	dbFilePermission = 0600
 )
 
+var (
+	// ErrDryRunMigrationOK signals that a migration executed successful,
+	// but we intentionally did not commit the result.
+	ErrDryRunMigrationOK = errors.New("Dry run migration successful")
+)
+
 // migration is a function which takes a prior outdated version of the database
 // instances and mutates the key/bucket structure to arrive at a more
 // up-to-date version of the database.
@@ -107,11 +113,12 @@ var bufPool = &sync.Pool{
 type DB struct {
 	*bbolt.DB
 	dbPath string
+	dryRun bool
 }
 
 // Open opens an existing channeldb. Any necessary schemas migrations due to
 // updates will take place as necessary.
-func Open(dbPath string) (*DB, error) {
+func Open(dbPath string, dryRun bool) (*DB, error) {
 	path := filepath.Join(dbPath, dbName)
 
 	if !fileExists(path) {
@@ -128,6 +135,7 @@ func Open(dbPath string) (*DB, error) {
 	chanDB := &DB{
 		DB:     bdb,
 		dbPath: dbPath,
+		dryRun: dryRun,
 	}
 
 	// Synchronize the version of database and apply migrations if needed.
@@ -1087,7 +1095,18 @@ func (d *DB) syncVersions(versions []version) error {
 		}
 
 		meta.DbVersionNumber = latestVersion
-		return putMeta(meta, tx)
+		err := putMeta(meta, tx)
+		if err != nil {
+			return err
+		}
+
+		// In dry-run mode, return an error to prevent the transaction
+		// from committing.
+		if d.dryRun {
+			return ErrDryRunMigrationOK
+		}
+
+		return nil
 	})
 }
 
