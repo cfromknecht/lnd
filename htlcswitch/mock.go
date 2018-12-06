@@ -135,7 +135,7 @@ func initDB() (*channeldb.DB, error) {
 		return nil, err
 	}
 
-	db, err := channeldb.Open(tempPath)
+	db, err := channeldb.Open(tempPath, false)
 	if err != nil {
 		return nil, err
 	}

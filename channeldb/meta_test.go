@@ -399,7 +399,7 @@ func TestMigrationReversion(t *testing.T) {
 		t.Fatalf("unable to create temp dir: %v", err)
 	}
 
-	cdb, err := Open(tempDirName)
+	cdb, err := Open(tempDirName, false)
 	if err != nil {
 		t.Fatalf("unable to open channeldb: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestMigrationReversion(t *testing.T) {
 		t.Fatalf("unable to increase db version: %v", err)
 	}
 
-	_, err = Open(tempDirName)
+	_, err = Open(tempDirName, false)
 	if err != ErrDBReversion {
 		t.Fatalf("unexpected error when opening channeldb, "+
 			"want: %v, got: %v", ErrDBReversion, err)

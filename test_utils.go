@@ -192,13 +192,13 @@ func createTestPeer(notifier chainntnfs.ChainNotifier,
 	}
 
 	alicePath, err := ioutil.TempDir("", "alicedb")
-	dbAlice, err := channeldb.Open(alicePath)
+	dbAlice, err := channeldb.Open(alicePath, false)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
 
 	bobPath, err := ioutil.TempDir("", "bobdb")
-	dbBob, err := channeldb.Open(bobPath)
+	dbBob, err := channeldb.Open(bobPath, false)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}

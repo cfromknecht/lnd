@@ -33,7 +33,7 @@ func TestOpenWithCreate(t *testing.T) {
 
 	// Next, open thereby creating channeldb for the first time.
 	dbPath := filepath.Join(tempDirName, "cdb")
-	cdb, err := Open(dbPath)
+	cdb, err := Open(dbPath, false)
 	if err != nil {
 		t.Fatalf("unable to create channeldb: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestWipe(t *testing.T) {
 
 	// Next, open thereby creating channeldb for the first time.
 	dbPath := filepath.Join(tempDirName, "cdb")
-	cdb, err := Open(dbPath)
+	cdb, err := Open(dbPath, false)
 	if err != nil {
 		t.Fatalf("unable to create channeldb: %v", err)
 	}
