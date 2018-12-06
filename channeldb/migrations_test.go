@@ -193,6 +193,7 @@ func TestPaymentStatusesMigration(t *testing.T) {
 		beforeMigrationFunc,
 		afterMigrationFunc,
 		paymentStatusesMigration,
+		false,
 		false)
 }
 
@@ -465,6 +466,7 @@ func TestMigrateOptionalChannelCloseSummaryFields(t *testing.T) {
 			beforeMigrationFunc,
 			afterMigrationFunc,
 			migrateOptionalChannelCloseSummaryFields,
+			false,
 			false)
 	}
 }

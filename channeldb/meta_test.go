@@ -12,13 +12,14 @@ import (
 // applyMigration is a helper test function that encapsulates the general steps
 // which are needed to properly check the result of applying migration function.
 func applyMigration(t *testing.T, beforeMigration, afterMigration func(d *DB),
-	migrationFunc migration, shouldFail bool) {
+	migrationFunc migration, shouldFail bool, dryRun bool) {
 
 	cdb, cleanUp, err := makeTestDB()
 	defer cleanUp()
 	if err != nil {
 		t.Fatal(err)
 	}
+	cdb.dryRun = dryRun
 
 	// beforeMigration usually used for populating the database
 	// with test data.
@@ -241,7 +242,8 @@ func TestMigrationWithPanic(t *testing.T) {
 		beforeMigrationFunc,
 		afterMigrationFunc,
 		migrationWithPanic,
-		true)
+		true,
+		false)
 }
 
 // TestMigrationWithFatal asserts that migrations which fail do not modify the
@@ -313,7 +315,8 @@ func TestMigrationWithFatal(t *testing.T) {
 		beforeMigrationFunc,
 		afterMigrationFunc,
 		migrationWithFatal,
-		true)
+		true,
+		false)
 }
 
 // TestMigrationWithoutErrors asserts that a successful migration has its
@@ -385,6 +388,7 @@ func TestMigrationWithoutErrors(t *testing.T) {
 		beforeMigrationFunc,
 		afterMigrationFunc,
 		migrationWithoutErrors,
+		false,
 		false)
 }
 
