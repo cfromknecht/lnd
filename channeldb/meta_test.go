@@ -431,3 +431,35 @@ func TestMigrationReversion(t *testing.T) {
 			"want: %v, got: %v", ErrDBReversion, err)
 	}
 }
+
+// TestMigrationDryRun ensures that opening the database in dry run migration
+// mode will fail and not commit the migration.
+func TestMigrationDryRun(t *testing.T) {
+	t.Parallel()
+
+	// Nothing to do, will inspect version number.
+	beforeMigrationFunc := func(d *DB) {}
+
+	// Check that version of database version is not modified.
+	afterMigrationFunc := func(d *DB) {
+		d.View(func(tx *bbolt.Tx) error {
+			meta, err := d.FetchMeta(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if meta.DbVersionNumber != 0 {
+				t.Fatal("dry run migration was not aborted")
+			}
+
+			return nil
+		})
+	}
+
+	applyMigration(t,
+		beforeMigrationFunc,
+		afterMigrationFunc,
+		func(*bbolt.Tx) error { return nil },
+		true,
+		true)
+}
