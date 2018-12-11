@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
+	"sort"
 
 	"github.com/lightningnetwork/lnd/watchtower/wtwire"
 )
@@ -92,31 +93,44 @@ func NewField(i interface{}) *Field {
 
 type FieldManifest map[uint8]*Field
 
+type kv struct {
+	k uint8
+	v *Field
+}
+
+var encoder []kv
+
 func (m *FieldManifest) Encode(w io.Writer) error {
-	var encoder [256]*Field
-	for key, field := range *m {
-		encoder[key] = field
+	if encoder == nil {
+		for key, field := range *m {
+			encoder = append(encoder, kv{key, field})
+		}
+
+		sort.Slice(encoder, func(i, j int) bool {
+			return encoder[i].k < encoder[j].k
+		})
 	}
 
 	var key [1]uint8
-	for i, field := range encoder {
-		if field == nil {
+	for _, field := range encoder {
+		if field.v == nil {
 			continue
 		}
 
-		key[0] = uint8(i)
+		key[0] = uint8(field.k)
 		_, err := w.Write(key[:])
 		if err != nil {
 			return err
 		}
 
-		length := field.size()
+		length := field.v.size()
+		//fmt.Printf("key: %d length: %d\n", key, length)
 		err = writeVarInt(w, length)
 		if err != nil {
 			return err
 		}
 
-		err = wtwire.WriteElement(w, field.ref)
+		err = wtwire.WriteElement(w, field.v.ref)
 		if err != nil {
 			return err
 		}

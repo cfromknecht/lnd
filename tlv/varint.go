@@ -13,34 +13,68 @@ var (
 func writeVarInt(w io.Writer, val uint16) error {
 	// Cannot encode zero-value.
 	if val == 0 {
-		return ErrZeroValue
+		//return ErrZeroValue
 	}
 
 	// Decrement the value to encode, since we are only interested in
 	// representing numbers in [1, 2^16).
-	val--
+	//val--
 
-	var varIntBytes []byte
+	/*
+		var varIntBytes []byte
+		switch {
+		case val <= 0x7f:
+			varIntBytes = []byte{byte(val)}
+
+		case 0x7f < val && val <= 0x3fff:
+			varIntBytes = []byte{
+				0x80 | (0x7f & byte(val>>7)),
+				byte(0x7f & val),
+			}
+
+		default:
+			varIntBytes = []byte{
+				0x80 | (0x7f & byte(val>>9)),
+				0x80 | (0x7f & byte(val>>2)),
+				byte(0x03 & val),
+			}
+		}
+	*/
+	var b [1]byte
 	switch {
 	case val <= 0x7f:
-		varIntBytes = []byte{byte(val)}
+		b[0] = byte(val)
+		_, err := w.Write(b[:])
+		return err
 
 	case 0x7f < val && val <= 0x3fff:
-		varIntBytes = []byte{
-			0x80 | (0x7f & byte(val>>7)),
-			byte(0x7f & val),
+		b[0] = 0x80 | (0x7f & byte(val>>7))
+		_, err := w.Write(b[:])
+		if err != nil {
+			return err
 		}
+
+		b[0] = byte(0x7f & val)
+		_, err = w.Write(b[:])
+		return err
 
 	default:
-		varIntBytes = []byte{
-			0x80 | (0x7f & byte(val>>9)),
-			0x80 | (0x7f & byte(val>>2)),
-			byte(0x03 & val),
+		b[0] = 0x80 | (0x7f & byte(val>>9))
+		_, err := w.Write(b[:])
+		if err != nil {
+			return err
 		}
-	}
 
-	_, err := w.Write(varIntBytes)
-	return err
+		b[0] = 0x80 | (0x7f & byte(val>>2))
+		_, err = w.Write(b[:])
+		if err != nil {
+			return err
+		}
+
+		b[0] = byte(0x03 & val)
+		_, err = w.Write(b[:])
+		return err
+	}
 }
 
 func readVarInt(r io.Reader) (uint16, error) {
@@ -60,7 +94,7 @@ func readVarInt(r io.Reader) (uint16, error) {
 		// bits. We make sure the value is less than 2 to avoid
 		// overflowing the unit16 after adding one to the total.
 		if i == 2 {
-			if value&0xfffc == 0xfffc && b > 0x02 {
+			if value&0xfffc == 0xfffc && b > 0x03 {
 				return 0, ErrValueTooLarge
 			}
 			value |= uint16(b)
@@ -93,7 +127,7 @@ func readVarInt(r io.Reader) (uint16, error) {
 
 	// Increment the reconstructed value, since the varint scheme only
 	// represents numbers in the range [1, 2^16).
-	value++
+	//value++
 
 	return value, nil
 }
