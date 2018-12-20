@@ -14,17 +14,21 @@ const (
 	// reply was never received and/or processed by the client.
 	CreateSessionCodeAlreadyExists CreateSessionCode = 60
 
+	// CreateSessionCodeRejectBlobType is returned when the tower does not
+	// support the proposed blob type.
+	CreateSessionCodeRejectBlobType CreateSessionCode = 61
+
 	// CreateSessionCodeRejectRejectMaxUpdates the tower rejected the maximum
 	// number of state updates proposed by the client.
-	CreateSessionCodeRejectRejectMaxUpdates CreateSessionCode = 61
+	CreateSessionCodeRejectRejectMaxUpdates CreateSessionCode = 62
 
 	// CreateSessionCodeRejectRewardRate the tower rejected the reward rate
 	// proposed by the client.
-	CreateSessionCodeRejectRewardRate CreateSessionCode = 62
+	CreateSessionCodeRejectRewardRate CreateSessionCode = 63
 
 	// CreateSessionCodeRejectSweepFeeRate the tower rejected the sweep fee
 	// rate proposed by the client.
-	CreateSessionCodeRejectSweepFeeRate CreateSessionCode = 63
+	CreateSessionCodeRejectSweepFeeRate CreateSessionCode = 64
 )
 
 // MaxCreateSessionReplyDataLength is the maximum size of the Data payload
