@@ -8,6 +8,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcutil/txsort"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/watchtower/blob"
 	"github.com/lightningnetwork/lnd/watchtower/wtdb"
@@ -166,42 +167,72 @@ func (p *JusticeDescriptor) assembleJusticeTxn(txWeight int64,
 		})
 	}
 
-	// Using the total input amount and the transaction's weight, compute
-	// the sweep and reward amounts. This corresponds to the amount returned
-	// to the victim and the amount paid to the tower, respectively. To do
-	// so, the required transaction fee is subtracted from the total, and
-	// the remaining amount is divided according to the prenegotiated reward
-	// rate from the client's session info.
-	sweepAmt, rewardAmt, err := p.SessionInfo.ComputeSweepOutputs(
-		totalAmt, txWeight,
-	)
-	if err != nil {
-		return nil, err
+	blobType := p.SessionInfo.Policy.BlobType
+	if blobType.Has(blob.FlagReward) {
+		// Using the total input amount and the transaction's weight,
+		// compute the sweep and reward amounts. This corresponds to the
+		// amount returned to the victim and the amount paid to the
+		// tower, respectively. To do so, the required transaction fee
+		// is subtracted from the total, and the remaining amount is
+		// divided according to the prenegotiated reward rate from the
+		// client's session info.
+		sweepAmt, rewardAmt, err := p.SessionInfo.ComputeRewardOutputs(
+			totalAmt, txWeight,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Add the sweep and reward outputs to the justice transaction.
+		justiceTxn.AddTxOut(&wire.TxOut{
+			PkScript: p.JusticeKit.SweepAddress[:],
+			Value:    int64(sweepAmt),
+		})
+		justiceTxn.AddTxOut(&wire.TxOut{
+			PkScript: p.SessionInfo.RewardAddress,
+			Value:    int64(rewardAmt),
+		})
+	} else {
+		// Using the total input amount and the transaction's weight,
+		// compute the sweep amount, which corresponds to the amount
+		// returned to the victim. To do so, the required transaction
+		// fee is subtracted from the total input amount.
+		sweepAmt, err := p.SessionInfo.ComputeAltruistOutput(
+			totalAmt, txWeight,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Add the sweep output to the justice transaction.
+		justiceTxn.AddTxOut(&wire.TxOut{
+			PkScript: p.JusticeKit.SweepAddress[:],
+			Value:    int64(sweepAmt),
+		})
 	}
 
-	// TODO(conner): abort/don't add if outputs are dusty
-
-	// Add the sweep and reward outputs to the justice transaction.
-	justiceTxn.AddTxOut(&wire.TxOut{
-		PkScript: p.JusticeKit.SweepAddress[:],
-		Value:    int64(sweepAmt),
-	})
-	justiceTxn.AddTxOut(&wire.TxOut{
-		PkScript: p.SessionInfo.RewardAddress,
-		Value:    int64(rewardAmt),
-	})
-
-	// TODO(conner): apply and handle BIP69 sort
+	txsort.InPlaceSort(justiceTxn)
 
 	btx := btcutil.NewTx(justiceTxn)
 	if err := blockchain.CheckTransactionSanity(btx); err != nil {
 		return nil, err
 	}
 
-	// Attach each of the provided witnesses to the transaction.
-	for i, input := range inputs {
-		justiceTxn.TxIn[i].Witness = input.witness
+	// Since the transaction inputs could have been reordered as a result of the
+	// BIP69 sort, create an index mapping each prevout to it's new index.
+	inputIndex := make(map[wire.OutPoint]int)
+	for i, txIn := range justiceTxn.TxIn {
+		inputIndex[txIn.PreviousOutPoint] = i
+	}
 
+	// Attach each of the provided witnesses to the transaction.
+	for _, input := range inputs {
+		// Lookup the input's new post-sort position.
+		i := inputIndex[input.outPoint]
+		justiceTxn.TxIn[i].Witness = input.witness
+	}
+
+	for i, input := range inputs {
 		// Validate the reconstructed witnesses to ensure they are valid
 		// for the breached inputs.
 		vm, err := txscript.NewEngine(
