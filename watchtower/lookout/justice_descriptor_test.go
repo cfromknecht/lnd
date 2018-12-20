@@ -119,11 +119,16 @@ func TestJusticeDescriptor(t *testing.T) {
 	weightEstimate.AddWitnessInput(lnwallet.P2WKHWitnessSize)
 	txWeight := weightEstimate.Weight()
 
+	rewardAndCommitType := blob.TypeFromFlags(
+		blob.FlagReward, blob.FlagCommitOutputs,
+	)
+
 	// Create a session info so that simulate agreement of the sweep
 	// parameters that should be used in constructing the justice
 	// transaction.
 	sessionInfo := &wtdb.SessionInfo{
 		Policy: wtpolicy.Policy{
+			BlobType:     rewardAndCommitType,
 			SweepFeeRate: 2000,
 			RewardRate:   900000,
 		},
@@ -133,7 +138,7 @@ func TestJusticeDescriptor(t *testing.T) {
 	// Given the total input amount and the weight estimate, compute the
 	// amount that should be swept for the victim and the amount taken as a
 	// reward by the watchtower.
-	sweepAmt, rewardAmt, err := sessionInfo.ComputeSweepOutputs(
+	sweepAmt, rewardAmt, err := sessionInfo.ComputeRewardOutputs(
 		totalAmount, int64(txWeight),
 	)
 	if err != nil {
