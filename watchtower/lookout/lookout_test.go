@@ -15,6 +15,7 @@ import (
 	"github.com/lightningnetwork/lnd/watchtower/blob"
 	"github.com/lightningnetwork/lnd/watchtower/lookout"
 	"github.com/lightningnetwork/lnd/watchtower/wtdb"
+	"github.com/lightningnetwork/lnd/watchtower/wtpolicy"
 )
 
 type mockPunisher struct {
@@ -88,13 +89,17 @@ func TestLookoutBreachMatching(t *testing.T) {
 
 	// Create two sessions, representing two distinct clients.
 	sessionInfo1 := &wtdb.SessionInfo{
-		ID:            makeArray33(1),
-		MaxUpdates:    10,
+		ID: makeArray33(1),
+		Policy: wtpolicy.Policy{
+			MaxUpdates: 10,
+		},
 		RewardAddress: makeAddrSlice(22),
 	}
 	sessionInfo2 := &wtdb.SessionInfo{
-		ID:            makeArray33(2),
-		MaxUpdates:    10,
+		ID: makeArray33(2),
+		Policy: wtpolicy.Policy{
+			MaxUpdates: 10,
+		},
 		RewardAddress: makeAddrSlice(22),
 	}
 

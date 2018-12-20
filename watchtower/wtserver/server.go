@@ -14,6 +14,7 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/watchtower/wtdb"
+	"github.com/lightningnetwork/lnd/watchtower/wtpolicy"
 	"github.com/lightningnetwork/lnd/watchtower/wtwire"
 )
 
@@ -327,7 +328,7 @@ func (s *Server) handleInit(localInit, remoteInit *wtwire.Init) error {
 // session info is known about the session id. If an existing session is found,
 // the reward address is returned in case the client lost our reply.
 func (s *Server) handleCreateSession(peer Peer, id *wtdb.SessionID,
-	init *wtwire.CreateSession) error {
+	req *wtwire.CreateSession) error {
 
 	// TODO(conner): validate accept against policy
 
@@ -375,11 +376,13 @@ func (s *Server) handleCreateSession(peer Peer, id *wtdb.SessionID,
 	// address, and session id.
 	info := wtdb.SessionInfo{
 		ID:            *id,
-		Version:       init.BlobVersion,
-		MaxUpdates:    init.MaxUpdates,
-		RewardRate:    init.RewardRate,
-		SweepFeeRate:  init.SweepFeeRate,
 		RewardAddress: rewardAddrBytes,
+		Policy: wtpolicy.Policy{
+			BlobVersion:  req.BlobVersion,
+			MaxUpdates:   req.MaxUpdates,
+			RewardRate:   req.RewardRate,
+			SweepFeeRate: req.SweepFeeRate,
+		},
 	}
 
 	// Insert the session info into the watchtower's database. If
