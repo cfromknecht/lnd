@@ -14,6 +14,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/watchtower/blob"
 	"github.com/lightningnetwork/lnd/watchtower/wtdb"
 	"github.com/lightningnetwork/lnd/watchtower/wtpolicy"
 	"github.com/lightningnetwork/lnd/watchtower/wtwire"
@@ -271,7 +272,7 @@ func (s *Server) handleClient(peer Peer) {
 			// Attempt to open a new session for this client.
 			err := s.handleCreateSession(peer, &id, msg)
 			if err != nil {
-				log.Errorf("unable to handle CreateSession "+
+				log.Errorf("Unable to handle CreateSession "+
 					"from %s: %v", id, err)
 			}
 
@@ -392,6 +393,15 @@ func (s *Server) handleCreateSession(peer Peer, id *wtdb.SessionID,
 		}
 	*/
 
+	// Ensure that the requested blob type is supported by our tower.
+	if !blob.IsSupportedType(req.BlobType) {
+		log.Debugf("Rejecting CreateSession from %s, unsupported blob "+
+			"type %d", id, req.BlobType)
+		return s.replyCreateSession(
+			peer, id, wtwire.CreateSessionCodeRejectBlobType, nil,
+		)
+	}
+
 	// TODO(conner): create invoice for upfront payment
 
 	// Assemble the session info using the agreed upon parameters, reward
@@ -399,7 +409,7 @@ func (s *Server) handleCreateSession(peer Peer, id *wtdb.SessionID,
 	info := wtdb.SessionInfo{
 		ID: *id,
 		Policy: wtpolicy.Policy{
-			BlobVersion:  req.BlobVersion,
+			BlobType:     req.BlobType,
 			MaxUpdates:   req.MaxUpdates,
 			RewardRate:   req.RewardRate,
 			SweepFeeRate: req.SweepFeeRate,
