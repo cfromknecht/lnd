@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/btcsuite/btcutil"
+	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/watchtower/wtpolicy"
 )
 
@@ -40,6 +41,8 @@ var (
 	// commitment txn is insufficient to cover the fees required to sweep
 	// it.
 	ErrFeeExceedsInputs = errors.New("sweep fee exceeds input values")
+
+	ErrCreatesDust = errors.New("justice transaction creates dust at fee rate")
 )
 
 // SessionInfo holds the negotiated session parameters for single session id,
@@ -98,14 +101,37 @@ func (s *SessionInfo) AcceptUpdateSequence(seqNum, lastApplied uint16) error {
 	return nil
 }
 
+func (s *SessionInfo) ComputeAltruistOutput(totalAmt btcutil.Amount,
+	txWeight int64) (btcutil.Amount, error) {
+
+	txFee := s.Policy.SweepFeeRate.FeeForWeight(txWeight)
+	if txFee > totalAmt {
+		return 0, ErrFeeExceedsInputs
+	}
+
+	sweepAmt := totalAmt - txFee
+
+	// TODO(conner): replace w/ configurable dust limit
+	dustLimit := lnwallet.DefaultDustLimit()
+
+	// Check that the created outputs won't be dusty.
+	if sweepAmt <= dustLimit {
+		return 0, ErrCreatesDust
+	}
+
+	// TODO(conner): also compare output value to fee?
+
+	return sweepAmt, nil
+}
+
 // ComputeSweepOutputs splits the total funds in a breaching commitment
 // transaction between the victim and the tower, according to the sweep fee rate
 // and reward rate. The fees are first subtracted from the overall total, before
 // splitting the remaining balance amongst the victim and tower.
-func (s *SessionInfo) ComputeSweepOutputs(totalAmt btcutil.Amount,
-	txVSize int64) (btcutil.Amount, btcutil.Amount, error) {
+func (s *SessionInfo) ComputeRewardOutputs(totalAmt btcutil.Amount,
+	txWeight int64) (btcutil.Amount, btcutil.Amount, error) {
 
-	txFee := s.Policy.SweepFeeRate.FeeForWeight(txVSize)
+	txFee := s.Policy.SweepFeeRate.FeeForWeight(txWeight)
 	if txFee > totalAmt {
 		return 0, 0, ErrFeeExceedsInputs
 	}
@@ -118,7 +144,19 @@ func (s *SessionInfo) ComputeSweepOutputs(totalAmt btcutil.Amount,
 	rewardAmt := (totalAmt*rewardRate + 999999) / 1000000
 	sweepAmt := totalAmt - rewardAmt
 
-	// TODO(conner): check dustiness
+	// TODO(conner): replace w/ configurable dust limit
+	dustLimit := lnwallet.DefaultDustLimit()
+
+	// Check that the created outputs won't be dusty.
+	if sweepAmt <= dustLimit {
+		return 0, 0, ErrCreatesDust
+	}
+
+	if rewardAmt <= dustLimit {
+		return 0, 0, ErrCreatesDust
+	}
+
+	// TODO(conner): also compare output value to fee?
 
 	return sweepAmt, rewardAmt, nil
 }
