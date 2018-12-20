@@ -2,12 +2,15 @@ package lncfg
 
 import (
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/btcsuite/btcd/btcec"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/tor"
 )
 
@@ -160,6 +163,48 @@ func ParseAddressString(strAddress string, defaultPort string,
 
 		return tcpResolver("tcp", addrWithPort)
 	}
+}
+
+func ParseLNAddressString(strAddress string, defaultPort string,
+	tcpResolver tcpResolver) (*lnwire.NetAddress, error) {
+	var parsedPubKey, parsedAddr string
+
+	if len(strAddress) == 0 {
+		return nil, nil
+	}
+
+	parts := strings.Split(strAddress, "@")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid lightning address %s: "+
+			"must be of the form <pubkey-hex>@<addr>", strAddress)
+	}
+
+	parsedPubKey, parsedAddr = parts[0], parts[1]
+
+	pubKeyBytes, err := hex.DecodeString(parsedPubKey)
+	if err != nil {
+		return nil, fmt.Errorf("invalid lightning address pubkey: %v", err)
+	}
+
+	if len(pubKeyBytes) != 33 {
+		return nil, fmt.Errorf("invalid lightning address pubkey: "+
+			"length must be 33 bytes, found %d", len(pubKeyBytes))
+	}
+
+	pubKey, err := btcec.ParsePubKey(pubKeyBytes, btcec.S256())
+	if err != nil {
+		return nil, fmt.Errorf("invalid lightning address pubkey: %v", err)
+	}
+
+	addr, err := ParseAddressString(parsedAddr, defaultPort, tcpResolver)
+	if err != nil {
+		return nil, fmt.Errorf("invalid lightning address address: %v", err)
+	}
+
+	return &lnwire.NetAddress{
+		IdentityKey: pubKey,
+		Address:     addr,
+	}, nil
 }
 
 // verifyPort makes sure that an address string has both a host and a port. If
