@@ -106,6 +106,10 @@ func ExpectedFee(f ForwardingPolicy,
 	return f.BaseFee + (htlcAmt*f.FeeRate)/1000000
 }
 
+type BreachBackupClient interface {
+	BackupState(*lnwire.ChannelID, *lnwallet.BreachRetribution) error
+}
+
 // ChannelLinkConfig defines the configuration for the channel link. ALL
 // elements within the configuration MUST be non-nil for channel link to carry
 // out its duties.
@@ -237,6 +241,8 @@ type ChannelLinkConfig struct {
 	// fee rate. A random timeout will be selected between these values.
 	MinFeeUpdateTimeout time.Duration
 	MaxFeeUpdateTimeout time.Duration
+
+	TowerClient BreachBackupClient
 }
 
 // channelLink is the service which drives a channel's commitment update
@@ -1552,6 +1558,29 @@ func (l *channelLink) handleUpstreamMsg(msg lnwire.Message) {
 			l.fail(LinkFailureError{code: ErrInvalidRevocation},
 				"unable to accept revocation: %v", err)
 			return
+		}
+
+		if l.cfg.TowerClient != nil {
+			state := l.channel.State()
+			breachInfo, err := lnwallet.NewBreachRetribution(
+				state, state.RemoteCommitment.CommitHeight-1, 0,
+			)
+			if err != nil {
+				l.fail(LinkFailureError{code: ErrInternalError},
+					"failed to load breach info: %v", err)
+				return
+			}
+
+			log.Infof("BREACH TXN: %v\n",
+				spew.Sdump(breachInfo.BreachTransaction))
+
+			chanID := l.ChanID()
+			err = l.cfg.TowerClient.BackupState(&chanID, breachInfo)
+			if err != nil {
+				l.fail(LinkFailureError{code: ErrInternalError},
+					"unable to queue breach backup: %v", err)
+				return
+			}
 		}
 
 		l.processRemoteSettleFails(fwdPkg, settleFails)
