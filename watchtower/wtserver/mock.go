@@ -8,7 +8,60 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/keychain"
+	"github.com/lightningnetwork/lnd/lnwallet"
 )
+
+type MockSigner struct {
+	index uint32
+	keys  map[keychain.KeyLocator]*btcec.PrivateKey
+}
+
+func NewMockSigner() *MockSigner {
+	return &MockSigner{
+		keys: make(map[keychain.KeyLocator]*btcec.PrivateKey),
+	}
+}
+
+func (s *MockSigner) SignOutputRaw(tx *wire.MsgTx,
+	signDesc *lnwallet.SignDescriptor) ([]byte, error) {
+
+	witnessScript := signDesc.WitnessScript
+	amt := signDesc.Output.Value
+
+	privKey, ok := s.keys[signDesc.KeyDesc.KeyLocator]
+	if !ok {
+		panic("cannot sign w/ unknown key")
+	}
+
+	sig, err := txscript.RawTxInWitnessSignature(
+		tx, signDesc.SigHashes, signDesc.InputIndex, amt,
+		witnessScript, signDesc.HashType, privKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return sig[:len(sig)-1], nil
+}
+
+func (s *MockSigner) ComputeInputScript(tx *wire.MsgTx,
+	signDesc *lnwallet.SignDescriptor) (*lnwallet.InputScript, error) {
+	return nil, nil
+}
+
+func (s *MockSigner) AddPrivKey(privKey *btcec.PrivateKey) keychain.KeyLocator {
+	keyLoc := keychain.KeyLocator{
+		Index: s.index,
+	}
+	s.index++
+
+	s.keys[keyLoc] = privKey
+
+	return keyLoc
+}
 
 type MockPeer struct {
 	remotePub  *btcec.PublicKey
