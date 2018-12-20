@@ -69,6 +69,8 @@ type Server struct {
 	globalFeatures *lnwire.RawFeatureVector
 	localFeatures  *lnwire.RawFeatureVector
 
+	rewardScript []byte
+
 	wg   sync.WaitGroup
 	quit chan struct{}
 }
@@ -81,11 +83,31 @@ func New(cfg *Config) (*Server, error) {
 		wtwire.WtSessionsOptional,
 	)
 
+	// Now that we've established that this session does not exist in the
+	// database, retrieve the sweep address that will be given to the
+	// client. This address is to be included by the client when signing
+	// sweep transactions destined for this tower, if its negotiated output
+	// is not dust.
+	rewardAddress, err := cfg.NewAddress()
+	if err != nil {
+		log.Errorf("Unable to generate reward addr: %v", err)
+		return nil, err
+	}
+
+	// Construct the pkscript the client should pay to when signing justice
+	// transactions for this session.
+	rewardScript, err := txscript.PayToAddrScript(rewardAddress)
+	if err != nil {
+		log.Errorf("Unable to generate reward script: %v", err)
+		return nil, err
+	}
+
 	s := &Server{
 		cfg:            cfg,
 		clients:        make(map[wtdb.SessionID]Peer),
 		globalFeatures: lnwire.NewRawFeatureVector(),
 		localFeatures:  localFeatures,
+		rewardScript:   rewardScript,
 		quit:           make(chan struct{}),
 	}
 
@@ -345,28 +367,30 @@ func (s *Server) handleCreateSession(peer Peer, id *wtdb.SessionID,
 		)
 	}
 
-	// Now that we've established that this session does not exist in the
-	// database, retrieve the sweep address that will be given to the
-	// client. This address is to be included by the client when signing
-	// sweep transactions destined for this tower, if its negotiated output
-	// is not dust.
-	rewardAddress, err := s.cfg.NewAddress()
-	if err != nil {
-		log.Errorf("unable to generate reward addr for %s", id)
-		return s.replyCreateSession(
-			peer, id, wtwire.CodeTemporaryFailure, nil,
-		)
-	}
+	/*
+		// Now that we've established that this session does not exist in the
+		// database, retrieve the sweep address that will be given to the
+		// client. This address is to be included by the client when signing
+		// sweep transactions destined for this tower, if its negotiated output
+		// is not dust.
+		rewardAddress, err := s.cfg.NewAddress()
+		if err != nil {
+			log.Errorf("unable to generate reward addr for %s", id)
+			return s.replyCreateSession(
+				peer, id, wtwire.CodeTemporaryFailure, nil,
+			)
+		}
 
-	// Construct the pkscript the client should pay to when signing justice
-	// transactions for this session.
-	rewardScript, err := txscript.PayToAddrScript(rewardAddress)
-	if err != nil {
-		log.Errorf("unable to generate reward script for %s", id)
-		return s.replyCreateSession(
-			peer, id, wtwire.CodeTemporaryFailure, nil,
-		)
-	}
+		// Construct the pkscript the client should pay to when signing justice
+		// transactions for this session.
+		rewardScript, err := txscript.PayToAddrScript(rewardAddress)
+		if err != nil {
+			log.Errorf("unable to generate reward script for %s", id)
+			return s.replyCreateSession(
+				peer, id, wtwire.CodeTemporaryFailure, nil,
+			)
+		}
+	*/
 
 	// TODO(conner): create invoice for upfront payment
 
@@ -380,7 +404,7 @@ func (s *Server) handleCreateSession(peer Peer, id *wtdb.SessionID,
 			RewardRate:   req.RewardRate,
 			SweepFeeRate: req.SweepFeeRate,
 		},
-		RewardAddress: rewardScript,
+		RewardAddress: s.rewardScript,
 	}
 
 	// Insert the session info into the watchtower's database. If
@@ -396,7 +420,7 @@ func (s *Server) handleCreateSession(peer Peer, id *wtdb.SessionID,
 	log.Infof("Accepted session for %s", id)
 
 	return s.replyCreateSession(
-		peer, id, wtwire.CodeOK, rewardScript,
+		peer, id, wtwire.CodeOK, s.rewardScript,
 	)
 }
 
