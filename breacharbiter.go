@@ -320,6 +320,8 @@ func convertToSecondLevelRevoke(bo *breachedOutput, breachInfo *retributionInfo,
 func (b *breachArbiter) waitForSpendEvent(breachInfo *retributionInfo,
 	spendNtfns map[wire.OutPoint]*chainntnfs.SpendEvent) error {
 
+	inputs := breachInfo.breachedOutputs
+
 	// spend is used to wrap the index of the output that gets spent
 	// together with the spend details.
 	type spend struct {
@@ -330,11 +332,11 @@ func (b *breachArbiter) waitForSpendEvent(breachInfo *retributionInfo,
 	// We create a channel the first goroutine that gets a spend event can
 	// signal. We make it buffered in case multiple spend events come in at
 	// the same time.
-	anySpend := make(chan struct{}, len(breachInfo.breachedOutputs))
+	anySpend := make(chan struct{}, len(inputs))
 
 	// The allSpends channel will be used to pass spend events from all the
 	// goroutines that detects a spend before they are signalled to exit.
-	allSpends := make(chan spend, len(breachInfo.breachedOutputs))
+	allSpends := make(chan spend, len(inputs))
 
 	// exit will be used to signal the goroutines that they can exit.
 	exit := make(chan struct{})
@@ -342,18 +344,25 @@ func (b *breachArbiter) waitForSpendEvent(breachInfo *retributionInfo,
 
 	// We'll now launch a goroutine for each of the HTLC outputs, that will
 	// signal the moment they detect a spend event.
-	for i := 0; i < len(breachInfo.breachedOutputs); i++ {
-		breachedOutput := &breachInfo.breachedOutputs[i]
+	for i := 0; i < len(inputs); i++ {
+		breachedOutput := &inputs[i]
 
 		// If this isn't an HTLC output, then we can skip it.
-		if breachedOutput.witnessType != lnwallet.HtlcAcceptedRevoke &&
-			breachedOutput.witnessType != lnwallet.HtlcOfferedRevoke {
+		switch breachedOutput.witnessType {
+
+		case lnwallet.CommitmentRevoke, lnwallet.CommitmentNoDelay:
+			brarLog.Debugf("Checking for watchtower sweep on "+
+				"commmitment output(%v) for ChannelPoint(%v)",
+				breachedOutput.outpoint, breachInfo.chanPoint)
+
+		case lnwallet.HtlcAcceptedRevoke, lnwallet.HtlcOfferedRevoke:
+			brarLog.Debugf("Checking for second-level attempt on "+
+				"HTLC(%v) for ChannelPoint(%v)",
+				breachedOutput.outpoint, breachInfo.chanPoint)
+
+		default:
 			continue
 		}
-
-		brarLog.Debugf("Checking for second-level attempt on HTLC(%v) "+
-			"for ChannelPoint(%v)", breachedOutput.outpoint,
-			breachInfo.chanPoint)
 
 		// If we have already registered for a notification for this
 		// output, we'll reuse it.
@@ -396,10 +405,26 @@ func (b *breachArbiter) waitForSpendEvent(breachInfo *retributionInfo,
 				if !ok {
 					return
 				}
-				brarLog.Debugf("Detected spend of HTLC(%v) "+
-					"for ChannelPoint(%v)",
-					breachedOutput.outpoint,
-					breachInfo.chanPoint)
+
+				switch breachedOutput.witnessType {
+				case lnwallet.CommitmentRevoke,
+					lnwallet.CommitmentNoDelay:
+
+					brarLog.Debugf("Detected "+
+						"watchtower sweep on "+
+						"commmitment output(%v) "+
+						"for ChannelPoint(%v)",
+						breachedOutput.outpoint,
+						breachInfo.chanPoint)
+
+				case lnwallet.HtlcAcceptedRevoke,
+					lnwallet.HtlcOfferedRevoke:
+
+					brarLog.Debugf("Detected spend of "+
+						"HTLC(%v) for ChannelPoint(%v)",
+						breachedOutput.outpoint,
+						breachInfo.chanPoint)
+				}
 
 				// First we send the spend event on the
 				// allSpends channel, such that it can be
@@ -431,21 +456,68 @@ func (b *breachArbiter) waitForSpendEvent(breachInfo *retributionInfo,
 		// channel have exited. We can therefore safely close the
 		// channel before ranging over its content.
 		close(allSpends)
-		for s := range allSpends {
-			breachedOutput := &breachInfo.breachedOutputs[s.index]
-			brarLog.Debugf("Detected second-level spend on "+
-				"HTLC(%v) for ChannelPoint(%v)",
-				breachedOutput.outpoint, breachInfo.chanPoint)
 
+		doneOutputs := make(map[int]struct{})
+		for s := range allSpends {
+			breachedOutput := &inputs[s.index]
 			delete(spendNtfns, breachedOutput.outpoint)
 
-			// In this case we'll morph our initial revoke spend to
-			// instead point to the second level output, and update
-			// the sign descriptor in the process.
-			convertToSecondLevelRevoke(
-				breachedOutput, breachInfo, s.detail,
-			)
+			switch breachedOutput.witnessType {
+			case lnwallet.CommitmentRevoke,
+				lnwallet.CommitmentNoDelay:
+
+				brarLog.Debugf("Detected watchtower sweep "+
+					"on commitment output(%v) for "+
+					"ChannelPoint(%v)",
+					breachedOutput.outpoint,
+					breachInfo.chanPoint)
+
+			case lnwallet.HtlcAcceptedRevoke,
+				lnwallet.HtlcOfferedRevoke:
+
+				brarLog.Debugf("Detected second-level spend "+
+					"on HTLC(%v) for ChannelPoint(%v)",
+					breachedOutput.outpoint, breachInfo.chanPoint)
+
+				// In this case we'll morph our initial revoke spend to
+				// instead point to the second level output, and update
+				// the sign descriptor in the process.
+				convertToSecondLevelRevoke(
+					breachedOutput, breachInfo, s.detail,
+				)
+
+				continue
+
+			case lnwallet.HtlcSecondLevelRevoke:
+
+				brarLog.Debugf("Detected unexpected sweep "+
+					"on second-level HTLC output(%v) for "+
+					"ChannelPoint(%v)",
+					breachedOutput.outpoint,
+					breachInfo.chanPoint)
+			}
+
+			doneOutputs[s.index] = struct{}{}
 		}
+
+		brarLog.Debugf("Before inputs: %v", len(inputs))
+
+		var nextIndex int
+		for i := range inputs {
+			if _, ok := doneOutputs[i]; ok {
+				brarLog.Debugf("Skipping input %d", i)
+				continue
+			}
+
+			inputs[nextIndex] = inputs[i]
+			nextIndex++
+		}
+
+		brarLog.Debugf("Trimming to %d", nextIndex)
+		breachInfo.breachedOutputs = inputs[:nextIndex]
+
+		brarLog.Debugf("After inputs: %v", len(breachInfo.breachedOutputs))
+
 	case <-b.quit:
 		return errBrarShuttingDown
 	}
@@ -503,6 +575,22 @@ func (b *breachArbiter) exactRetribution(confChan *chainntnfs.ConfirmationEvent,
 	// txid.
 justiceTxBroadcast:
 	if finalTx == nil {
+		if len(breachInfo.breachedOutputs) == 0 {
+			brarLog.Debugf("No more outputs to sweep for breach, "+
+				"marking channel=%v fully resolved",
+				breachInfo.chanPoint)
+
+			// If there are no more outputs to sweep, mark the
+			// channel as fully closed.
+			err := b.cfg.DB.MarkChanFullyClosed(
+				&breachInfo.chanPoint,
+			)
+			if err != nil {
+				brarLog.Errorf("unable to mark chan as closed: "+
+					"%v", err)
+				return
+			}
+		}
 		// With the breach transaction confirmed, we now create the
 		// justice tx which will claim ALL the funds within the
 		// channel.
