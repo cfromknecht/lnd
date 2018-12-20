@@ -42,6 +42,10 @@ import (
 	"github.com/lightningnetwork/lnd/sweep"
 	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/lightningnetwork/lnd/tor"
+	"github.com/lightningnetwork/lnd/watchtower/blob"
+	"github.com/lightningnetwork/lnd/watchtower/wtclient"
+	"github.com/lightningnetwork/lnd/watchtower/wtpolicy"
+	"github.com/lightningnetwork/lnd/watchtower/wtserver"
 )
 
 const (
@@ -161,6 +165,8 @@ type server struct {
 	chainArb *contractcourt.ChainArbitrator
 
 	sphinx *htlcswitch.OnionProcessor
+
+	towerClient wtclient.Client
 
 	connMgr *connmgr.ConnManager
 
@@ -924,6 +930,29 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 		return nil, err
 	}
 
+	if cfg.WtClient.Active {
+		policy := wtpolicy.DefaultPolicy()
+
+		if cfg.WtClient.GiveReward {
+			policy.BlobType |= blob.FlagReward.Type()
+		}
+
+		s.towerClient, err = wtclient.New(&wtclient.Config{
+			Signer:       cc.wallet.Cfg.Signer,
+			DB:           wtclient.NewMockDB(),
+			NetDial:      wtclient.NetDial,
+			Net:          cfg.net,
+			PrivateTower: cfg.WtClient.PrivateTower,
+			Policy:       policy,
+			NewAddress: func() ([]byte, error) {
+				return newSweepPkScript(cc.wallet)
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Create the connection manager which will be responsible for
 	// maintaining persistent outbound connections and also accepting new
 	// incoming connections
@@ -982,6 +1011,11 @@ func (s *server) Start() error {
 	}
 	if err := s.sphinx.Start(); err != nil {
 		return err
+	}
+	if s.towerClient != nil {
+		if err := s.towerClient.Start(); err != nil {
+			return err
+		}
 	}
 	if err := s.htlcSwitch.Start(); err != nil {
 		return err
@@ -1083,6 +1117,9 @@ func (s *server) Stop() error {
 	s.cc.feeEstimator.Stop()
 	s.invoices.Stop()
 	s.fundingMgr.Stop()
+	if s.towerClient != nil {
+		s.towerClient.Stop()
+	}
 
 	// Disconnect from each active peers to ensure that
 	// peerTerminationWatchers signal completion to each peer.
@@ -3214,4 +3251,10 @@ func (s *server) watchChannelStatus() {
 			return
 		}
 	}
+}
+
+func wtClientDial(localPriv *btcec.PrivateKey, netAddr *lnwire.NetAddress,
+	dialer func(string, string) (net.Conn, error)) (wtserver.Peer, error) {
+
+	return brontide.Dial(localPriv, netAddr, dialer)
 }
