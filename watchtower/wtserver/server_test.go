@@ -379,7 +379,7 @@ var stateUpdateTests = []stateUpdateTestCase{
 			{SeqNum: 2, LastApplied: 1},
 			nil, // Wait for read timeout to drop conn, then reconnect.
 			{SeqNum: 3, LastApplied: 2},
-			{SeqNum: 4, LastApplied: 3},
+			{SeqNum: 4, LastApplied: 3, IsComplete: 1},
 		},
 		replies: []*wtwire.StateUpdateReply{
 			{Code: wtwire.CodeOK, LastApplied: 1},
