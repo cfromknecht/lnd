@@ -20,6 +20,7 @@ import (
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/connmgr"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/coreos/bbolt"
@@ -45,7 +46,6 @@ import (
 	"github.com/lightningnetwork/lnd/watchtower/blob"
 	"github.com/lightningnetwork/lnd/watchtower/wtclient"
 	"github.com/lightningnetwork/lnd/watchtower/wtpolicy"
-	"github.com/lightningnetwork/lnd/watchtower/wtserver"
 )
 
 const (
@@ -617,10 +617,8 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 	}
 
 	s.sweeper = sweep.New(&sweep.UtxoSweeperConfig{
-		Estimator: cc.feeEstimator,
-		GenSweepScript: func() ([]byte, error) {
-			return newSweepPkScript(cc.wallet)
-		},
+		Estimator:          cc.feeEstimator,
+		GenSweepScript:     newSweepPkScriptGen(cc.wallet),
 		Signer:             cc.wallet.Cfg.Signer,
 		PublishTransaction: cc.wallet.PublishTransaction,
 		NewBatchTimer: func() <-chan time.Time {
@@ -663,10 +661,8 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 		// TODO(roasbeef): properly configure
 		//  * needs to be << or specified final hop time delta
 		BroadcastDelta: defaultBroadcastDelta,
-		NewSweepAddr: func() ([]byte, error) {
-			return newSweepPkScript(cc.wallet)
-		},
-		PublishTx: cc.wallet.PublishTransaction,
+		NewSweepAddr:   newSweepPkScriptGen(cc.wallet),
+		PublishTx:      cc.wallet.PublishTransaction,
 		DeliverResolutionMsg: func(msgs ...contractcourt.ResolutionMsg) error {
 			for _, msg := range msgs {
 				err := s.htlcSwitch.ProcessContractResolution(msg)
@@ -739,12 +735,10 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 	}, chanDB)
 
 	s.breachArbiter = newBreachArbiter(&BreachConfig{
-		CloseLink: closeLink,
-		DB:        chanDB,
-		Estimator: s.cc.feeEstimator,
-		GenSweepScript: func() ([]byte, error) {
-			return newSweepPkScript(cc.wallet)
-		},
+		CloseLink:          closeLink,
+		DB:                 chanDB,
+		Estimator:          s.cc.feeEstimator,
+		GenSweepScript:     newSweepPkScriptGen(cc.wallet),
 		Notifier:           cc.chainNotifier,
 		PublishTransaction: cc.wallet.PublishTransaction,
 		ContractBreaches:   contractBreaches,
@@ -944,9 +938,7 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 			Net:          cfg.net,
 			PrivateTower: cfg.WtClient.PrivateTower,
 			Policy:       policy,
-			NewAddress: func() ([]byte, error) {
-				return newSweepPkScript(cc.wallet)
-			},
+			NewAddress:   newSweepPkScriptGen(cc.wallet),
 		})
 		if err != nil {
 			return nil, err
@@ -3253,8 +3245,19 @@ func (s *server) watchChannelStatus() {
 	}
 }
 
-func wtClientDial(localPriv *btcec.PrivateKey, netAddr *lnwire.NetAddress,
-	dialer func(string, string) (net.Conn, error)) (wtserver.Peer, error) {
+// newSweepPkScriptGen creates closure that generates a new public key script
+// which should be used to sweep any funds into the on-chain wallet.
+// Specifically, the script generated is a version 0, pay-to-witness-pubkey-hash
+// (p2wkh) output.
+func newSweepPkScriptGen(
+	wallet lnwallet.WalletController) func() ([]byte, error) {
 
-	return brontide.Dial(localPriv, netAddr, dialer)
+	return func() ([]byte, error) {
+		sweepAddr, err := wallet.NewAddress(lnwallet.WitnessPubKey, false)
+		if err != nil {
+			return nil, err
+		}
+
+		return txscript.PayToAddrScript(sweepAddr)
+	}
 }
