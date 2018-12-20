@@ -28,6 +28,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing"
 	"github.com/lightningnetwork/lnd/tor"
+	"github.com/lightningnetwork/lnd/watchtower/wtclient"
 )
 
 const (
@@ -161,6 +162,16 @@ type torConfig struct {
 	PrivateKeyPath  string `long:"privatekeypath" description:"The path to the private key of the onion service being created"`
 }
 
+type wtClientConf struct {
+	Active bool `long:"active"`
+
+	PrivateTowerAddr string `long:"private-tower-addr" description:"If present, specifies a private tower address to backup revoked states. Must be of the form <pubkey>@<addr>."`
+
+	PrivateTower *lnwire.NetAddress
+
+	GiveReward bool `long:"give-reward"`
+}
+
 // config defines the configuration options for lnd.
 //
 // See loadConfig for further details regarding the configuration
@@ -245,6 +256,8 @@ type config struct {
 	net tor.Net
 
 	Routing *routing.Conf `group:"routing" namespace:"routing"`
+
+	WtClient *wtClientConf `group:"wtclient" namespace:"wtclient"`
 }
 
 // loadConfig initializes and parses the config using a config file and command
@@ -956,6 +969,18 @@ func loadConfig() (*config, error) {
 			return nil, errors.New("lnd must *only* be listening " +
 				"on localhost when running with Tor inbound " +
 				"support enabled")
+		}
+	}
+
+	if cfg.WtClient.Active {
+		cfg.WtClient.PrivateTower, err = lncfg.ParseLNAddressString(
+			cfg.WtClient.PrivateTowerAddr,
+			strconv.Itoa(wtclient.DefaultTowerPort),
+			cfg.net.ResolveTCPAddr,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("unable to parse private "+
+				"watchtower address: %v", err)
 		}
 	}
 
