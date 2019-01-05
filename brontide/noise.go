@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"runtime"
 	"time"
 
 	"golang.org/x/crypto/chacha20poly1305"
@@ -375,7 +376,7 @@ type Machine struct {
 	// read the next one. Having a fixed buffer that's re-used also means
 	// that we save on allocations as we don't need to create a new one
 	// each time.
-	nextCipherText [math.MaxUint16 + macSize]byte
+	nextCipherText *ReadBuffer
 }
 
 // NewBrontideMachine creates a new instance of the brontide state-machine. If
@@ -394,7 +395,9 @@ func NewBrontideMachine(initiator bool, localPub *btcec.PrivateKey,
 	m := &Machine{
 		handshakeState: handshake,
 		ephemeralGen:   ephemeralGen,
+		nextCipherText: readBufferPool.Take(),
 	}
+	runtime.SetFinalizer(m, freeReadBuffer)
 
 	// With the default options established, we'll now process all the
 	// options passed in as parameters.
@@ -748,4 +751,12 @@ func (b *Machine) ReadMessage(r io.Reader) ([]byte, error) {
 
 	// TODO(roasbeef): modify to let pass in slice
 	return b.recvCipher.Decrypt(nil, nil, b.nextCipherText[:pktLen])
+}
+
+// freeReadBuffer releases the Machine's nextCipherText buffer back to the
+// read buffer pool.
+//
+// NOTE: This method should only be called as a finalizer on a *Machine.
+func freeReadBuffer(b *Machine) {
+	readBufferPool.Return(b.nextCipherText)
 }
