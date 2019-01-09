@@ -78,7 +78,7 @@ func NewGCQueue(newItem func() Recycler,
 
 	q := &GCQueue{
 		takeBuffer:     make(chan Recycler),
-		returnBuffer:   make(chan Recycler, 10),
+		returnBuffer:   make(chan Recycler, 100),
 		expiryInterval: expiryInterval,
 		freeList:       list.New(),
 		recycleTicker:  ticker.New(gcInterval),
@@ -97,7 +97,7 @@ func (q *GCQueue) Take() Recycler {
 	select {
 	case item := <-q.takeBuffer:
 		return item
-	default:
+	case <-time.After(time.Millisecond):
 		return q.newItem()
 	}
 }
@@ -106,6 +106,13 @@ func (q *GCQueue) Take() Recycler {
 // available capacity. Under load, items may be dropped to ensure this method
 // does not block.
 func (q *GCQueue) Return(item Recycler) {
+	// Recycle the item to ensure that a dirty instance is never offered
+	// from Take. The call is done here so that the CPU cycles spent
+	// clearing the buffer are down by the caller, and not by the queue
+	// itself. This makes the queue more likely to be available to deliver
+	// items in the free list.
+	item.Recycle()
+
 	select {
 	case q.returnBuffer <- item:
 	default:
@@ -152,10 +159,6 @@ func (q *GCQueue) queueManager() {
 		// list and resume the recycle ticker so that it can be cleared
 		// if the entries are not quickly reused.
 		case item := <-q.returnBuffer:
-			// Recycle the item to ensure that a dirty instance is
-			// never offered from Take.
-			item.Recycle()
-
 			// Add the returned buffer to the freelist, recording
 			// the current time so we can determine when the entry
 			// expires.
@@ -174,11 +177,14 @@ func (q *GCQueue) queueManager() {
 		// has elapsed since their insertion. If after doing so, no
 		// elements remain, we will pause the recylce ticker.
 		case <-q.recycleTicker.Ticks():
-			// Since the insertTime of all entries will be
+			// Since the insert time of all entries will be
 			// monotonically increasing, iterate over elements and
 			// remove all entries that have expired.
 			var next *list.Element
 			for e := q.freeList.Front(); e != nil; e = next {
+				// Cache the next element, since it will become
+				// unreachable from the current element if it is
+				// removed.
 				next = e.Next()
 				entry := e.Value.(gcQueueEntry)
 
@@ -188,6 +194,8 @@ func (q *GCQueue) queueManager() {
 					// Remove the expired entry from the
 					// linked-list.
 					q.freeList.Remove(e)
+					entry.item = nil
+					e.Value = nil
 				} else {
 					// If this entry hasn't expired, then
 					// all entries that follow will still be
