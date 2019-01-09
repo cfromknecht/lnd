@@ -395,9 +395,7 @@ func NewBrontideMachine(initiator bool, localPub *btcec.PrivateKey,
 	m := &Machine{
 		handshakeState: handshake,
 		ephemeralGen:   ephemeralGen,
-		nextCipherText: readBufferPool.Take(),
 	}
-	runtime.SetFinalizer(m, freeReadBuffer)
 
 	// With the default options established, we'll now process all the
 	// options passed in as parameters.
@@ -740,6 +738,14 @@ func (b *Machine) ReadMessage(r io.Reader) ([]byte, error) {
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	// If this is the first message being read, grab a read buffer from the
+	// pool and set the Machine's finalizer to return the buffer when the
+	// connection is being deallocated.
+	if b.nextCipherText == nil {
+		b.nextCipherText = readBufferPool.Take()
+		runtime.SetFinalizer(b, freeReadBuffer)
 	}
 
 	// Next, using the length read from the packet header, read the
