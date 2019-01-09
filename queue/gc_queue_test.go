@@ -12,14 +12,6 @@ type mockRecycler bool
 
 func (*mockRecycler) Recycle() {}
 
-// blockingRecycler implements the queue.Recycler interface, such that Recycle
-// blocks indefinitely.
-type blockingRecycler chan struct{}
-
-func (r blockingRecycler) Recycle() {
-	<-(r)
-}
-
 // TestGCQueueGCCycle asserts that items that are kept in the GCQueue past their
 // expiration will be released by a subsequent gc cycle.
 func TestGCQueueGCCycle(t *testing.T) {
@@ -107,43 +99,6 @@ func TestGCQueuePartialGCCycle(t *testing.T) {
 	if numReused != numItems/2 {
 		t.Fatalf("expected %d items to be reused, got %d",
 			numItems/2, numReused)
-	}
-}
-
-// TestGCQueueNonBlockingTake verifies that the GCQueue is able to create new
-// items in a non-blocking manner. This is tested by having the Recycle method
-// block, and asserting that new items can still be returned.
-func TestGCQueueNonBlockingTake(t *testing.T) {
-	t.Parallel()
-
-	const (
-		gcInterval     = time.Second
-		expiryInterval = 250 * time.Millisecond
-		numItems       = 6
-	)
-
-	newItem := func() queue.Recycler { return make(blockingRecycler) }
-
-	bp := queue.NewGCQueue(newItem, gcInterval, expiryInterval)
-
-	// Taken numItems items from the gc queue.
-	itemSet1 := takeN(t, bp, numItems)
-
-	// Attempt to return all of the items back to the gc queue. The main
-	// even loop should stall as a result of Recycle blocking.
-	returnAll(bp, itemSet1)
-
-	// Draw another set of items from the gc queue, this should not block
-	// since Take should create new items if none can be delivered by the
-	// inner loop.
-	itemSet2 := takeN(t, bp, numItems)
-
-	// Verify that that the new item set doesn't have any intersection with
-	// the first set.
-	for item := range itemSet1 {
-		if _, ok := itemSet2[item]; ok {
-			t.Fatalf("items taken should not have been reused")
-		}
 	}
 }
 
