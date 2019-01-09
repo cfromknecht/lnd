@@ -759,4 +759,5 @@ func (b *Machine) ReadMessage(r io.Reader) ([]byte, error) {
 // NOTE: This method should only be called as a finalizer on a *Machine.
 func freeReadBuffer(b *Machine) {
 	readBufferPool.Return(b.nextCipherText)
+	b.nextCipherText = nil
 }
