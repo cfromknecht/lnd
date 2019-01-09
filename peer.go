@@ -620,7 +620,6 @@ func (p *peer) WaitForDisconnect(ready chan struct{}) {
 	// modifying the write buffer have exited, return the buffer to the pool
 	// to be reused.
 	p.server.writeBufferPool.Return(p.writeBuf)
-	p.writeBuf = nil
 }
 
 // Disconnect terminates the connection with the remote peer. Additionally, a
