@@ -163,7 +163,7 @@ type server struct {
 
 	sigPool *lnwallet.SigPool
 
-	writeBufferPool *lnpeer.WriteBufferPool
+	writePool *lnpeer.WritePool
 
 	// globalFeatures feature vector which affects HTLCs and thus are also
 	// advertised to other nodes.
@@ -260,15 +260,17 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 	sharedSecretPath := filepath.Join(graphDir, "sphinxreplay.db")
 	replayLog := htlcswitch.NewDecayedLog(sharedSecretPath, cc.chainNotifier)
 	sphinxRouter := sphinx.NewRouter(privKey, activeNetParams.Params, replayLog)
+
 	writeBufferPool := lnpeer.NewWriteBufferPool(
 		lnpeer.DefaultGCInterval, lnpeer.DefaultExpiryInterval,
 	)
+	writePool := lnpeer.NewWritePool(runtime.NumCPU(), writeBufferPool)
 
 	s := &server{
-		chanDB:          chanDB,
-		cc:              cc,
-		sigPool:         lnwallet.NewSigPool(runtime.NumCPU()*2, cc.signer),
-		writeBufferPool: writeBufferPool,
+		chanDB:    chanDB,
+		cc:        cc,
+		sigPool:   lnwallet.NewSigPool(runtime.NumCPU()*2, cc.signer),
+		writePool: writePool,
 
 		invoices: invoices.NewRegistry(chanDB, activeNetParams.Params),
 
@@ -1070,6 +1072,7 @@ func (s *server) Stop() error {
 
 	// Shutdown the wallet, funding manager, and the rpc server.
 	s.sigPool.Stop()
+	s.writePool.Stop()
 	s.cc.chainNotifier.Stop()
 	s.chanRouter.Stop()
 	s.htlcSwitch.Stop()

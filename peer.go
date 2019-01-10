@@ -198,7 +198,9 @@ type peer struct {
 	// messages to write out directly on the socket. By re-using this
 	// buffer, we avoid needing to allocate more memory each time a new
 	// message is to be sent to a peer.
-	writeBuf *lnpeer.WriteBuffer
+	//writeBuf *lnpeer.WriteBuffer
+
+	writePool *lnpeer.WritePool
 
 	queueQuit chan struct{}
 	quit      chan struct{}
@@ -239,7 +241,7 @@ func newPeer(conn net.Conn, connReq *connmgr.ConnReq, server *server,
 		chanCloseMsgs:      make(chan *closeMsg),
 		failedChannels:     make(map[lnwire.ChannelID]struct{}),
 
-		writeBuf: server.writeBufferPool.Take(),
+		writePool: server.writePool,
 
 		queueQuit: make(chan struct{}),
 		quit:      make(chan struct{}),
@@ -619,7 +621,7 @@ func (p *peer) WaitForDisconnect(ready chan struct{}) {
 	// Now that we are certain all active goroutines which could have been
 	// modifying the write buffer have exited, return the buffer to the pool
 	// to be reused.
-	p.server.writeBufferPool.Return(p.writeBuf)
+	//p.server.writeBufferPool.Return(p.writeBuf)
 }
 
 // Disconnect terminates the connection with the remote peer. Additionally, a
@@ -1366,22 +1368,26 @@ func (p *peer) writeMessage(msg lnwire.Message) error {
 
 	p.logWireMessage(msg, false)
 
-	// We'll re-slice of static write buffer to allow this new message to
-	// utilize all available space. We also ensure we cap the capacity of
-	// this new buffer to the static buffer which is sized for the largest
-	// possible protocol message.
-	b := bytes.NewBuffer(p.writeBuf[0:0:len(p.writeBuf)])
+	return p.writePool.Write(p.conn, msg, writeMessageTimeout, &p.bytesSent)
 
-	// With the temp buffer created and sliced properly (length zero, full
-	// capacity), we'll now encode the message directly into this buffer.
-	n, err := lnwire.WriteMessage(b, msg, 0)
-	atomic.AddUint64(&p.bytesSent, uint64(n))
+	/*
+		// We'll re-slice of static write buffer to allow this new message to
+		// utilize all available space. We also ensure we cap the capacity of
+		// this new buffer to the static buffer which is sized for the largest
+		// possible protocol message.
+		b := bytes.NewBuffer(p.writeBuf[0:0:len(p.writeBuf)])
 
-	p.conn.SetWriteDeadline(time.Now().Add(writeMessageTimeout))
+		// With the temp buffer created and sliced properly (length zero, full
+		// capacity), we'll now encode the message directly into this buffer.
+		n, err := lnwire.WriteMessage(b, msg, 0)
+		atomic.AddUint64(&p.bytesSent, uint64(n))
 
-	// Finally, write the message itself in a single swoop.
-	_, err = p.conn.Write(b.Bytes())
-	return err
+		p.conn.SetWriteDeadline(time.Now().Add(writeMessageTimeout))
+
+		// Finally, write the message itself in a single swoop.
+		_, err = p.conn.Write(b.Bytes())
+		return err
+	*/
 }
 
 // writeHandler is a goroutine dedicated to reading messages off of an incoming
