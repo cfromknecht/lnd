@@ -40,6 +40,7 @@ func NewWritePool(numWorkers int, bufferPool *WriteBufferPool) *WritePool {
 		pool:      bufferPool,
 		work:      make(chan *writeRequest),
 		workerSem: make(chan struct{}, numWorkers),
+		quit:      make(chan struct{}),
 	}
 }
 
@@ -82,7 +83,7 @@ func (w *WritePool) spawnWorker(req *writeRequest) {
 	writeBuf := w.pool.Take()
 	defer w.pool.Return(writeBuf)
 
-	buf := bytes.NewBuffer(writeBuf[:])
+	buf := bytes.NewBuffer(writeBuf[0:0:len(writeBuf)])
 
 	sendMessage := func(req *writeRequest) {
 		n, err := lnwire.WriteMessage(buf, req.msg, 0)
