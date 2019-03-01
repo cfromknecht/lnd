@@ -355,7 +355,7 @@ func (c *ChannelGraph) SetSourceNode(node *LightningNode) error {
 //
 // TODO(roasbeef): also need sig of announcement
 func (c *ChannelGraph) AddLightningNode(node *LightningNode) error {
-	return c.db.Update(func(tx *bbolt.Tx) error {
+	return c.db.Batch(func(tx *bbolt.Tx) error {
 		return addLightningNode(tx, node)
 	})
 }
@@ -483,7 +483,7 @@ func (c *ChannelGraph) deleteLightningNode(nodes *bbolt.Bucket,
 // the channel supports. The chanPoint and chanID are used to uniquely identify
 // the edge globally within the database.
 func (c *ChannelGraph) AddChannelEdge(edge *ChannelEdgeInfo) error {
-	return c.db.Update(func(tx *bbolt.Tx) error {
+	return c.db.Batch(func(tx *bbolt.Tx) error {
 		return c.addChannelEdge(tx, edge)
 	})
 }
@@ -1642,7 +1642,7 @@ func delChannelByEdge(edges *bbolt.Bucket, edgeIndex *bbolt.Bucket,
 // determined by the lexicographical ordering of the identity public keys of
 // the nodes on either side of the channel.
 func (c *ChannelGraph) UpdateEdgePolicy(edge *ChannelEdgePolicy) error {
-	return c.db.Update(func(tx *bbolt.Tx) error {
+	return c.db.Batch(func(tx *bbolt.Tx) error {
 		return updateEdgePolicy(tx, edge)
 	})
 }
