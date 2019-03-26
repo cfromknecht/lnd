@@ -161,11 +161,11 @@ type ChannelGraph struct {
 
 // NewChannelGraph allocates a new ChannelGraph backed by a DB instance. The
 // returned instance has its own unique edge cache.
-func NewChannelGraph(db *DB) *ChannelGraph {
+func NewChannelGraph(db *DB, edgeCacheSize, chanCacheSize int) *ChannelGraph {
 	return &ChannelGraph{
 		db:        db,
-		edgeCache: newEdgeCache(50000),
-		chanCache: newChannelCache(20000),
+		edgeCache: newEdgeCache(edgeCacheSize),
+		chanCache: newChannelCache(chanCacheSize),
 	}
 }
 

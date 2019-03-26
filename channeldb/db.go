@@ -20,6 +20,16 @@ import (
 const (
 	dbName           = "channel.db"
 	dbFilePermission = 0600
+
+	// DefaultEdgeCacheSize is the default number of edgeCacheEntries to
+	// cache for use in the rejection cache of incoming gossip traffic. This
+	// produces a cache size of around 1MB.
+	DefaultEdgeCacheSize = 50000
+
+	// DefaultChannelCacheSize is the default number of ChannelEdges cached
+	// in order to reply to gossip queries. This produces a cache size of
+	// around 40MB.
+	DefaultChannelCacheSize = 20000
 )
 
 // migration is a function which takes a prior outdated version of the database
@@ -108,6 +118,36 @@ var bufPool = &sync.Pool{
 	New: func() interface{} { return new(bytes.Buffer) },
 }
 
+type Options struct {
+	EdgeCacheSize    int
+	ChannelCacheSize int
+}
+
+// DefaultOptions
+func DefaultOptions() Options {
+	return Options{
+		EdgeCacheSize:    DefaultEdgeCacheSize,
+		ChannelCacheSize: DefaultChannelCacheSize,
+	}
+}
+
+// OptionModifier is a function signature for modifying the default Options.
+type OptionModifier func(*Options)
+
+// OptionSetEdgeCacheSize sets the EdgeCacheSize to n.
+func OptionSetEdgeCacheSize(n int) OptionModifier {
+	return func(o *Options) {
+		o.EdgeCacheSize = n
+	}
+}
+
+// OptionSetChannelCacheSize sets the ChannelCacheSize to n.
+func OptionSetChannelCacheSize(n int) OptionModifier {
+	return func(o *Options) {
+		o.ChannelCacheSize = n
+	}
+}
+
 // DB is the primary datastore for the lnd daemon. The database stores
 // information related to nodes, routing data, open/closed channels, fee
 // schedules, and reputation data.
@@ -119,13 +159,18 @@ type DB struct {
 
 // Open opens an existing channeldb. Any necessary schemas migrations due to
 // updates will take place as necessary.
-func Open(dbPath string) (*DB, error) {
+func Open(dbPath string, modifiers ...OptionModifier) (*DB, error) {
 	path := filepath.Join(dbPath, dbName)
 
 	if !fileExists(path) {
 		if err := createChannelDB(dbPath); err != nil {
 			return nil, err
 		}
+	}
+
+	opts := DefaultOptions()
+	for _, modifier := range modifiers {
+		modifier(&opts)
 	}
 
 	bdb, err := bbolt.Open(path, dbFilePermission, nil)
@@ -137,7 +182,9 @@ func Open(dbPath string) (*DB, error) {
 		DB:     bdb,
 		dbPath: dbPath,
 	}
-	chanDB.graph = NewChannelGraph(chanDB)
+	chanDB.graph = NewChannelGraph(
+		chanDB, opts.EdgeCacheSize, opts.ChannelCacheSize,
+	)
 
 	// Synchronize the version of database and apply migrations if needed.
 	if err := chanDB.syncVersions(dbVersions); err != nil {
