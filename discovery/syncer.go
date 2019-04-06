@@ -252,6 +252,8 @@ type GossipSyncer struct {
 	// be sent over.
 	gossipMsgs chan lnwire.Message
 
+	queryMsgs chan lnwire.Message
+
 	// bufferedChanRangeReplies is used in the waitingQueryChanReply to
 	// buffer all the chunked response to our query.
 	bufferedChanRangeReplies []lnwire.ShortChannelID
@@ -309,6 +311,7 @@ func newGossipSyncer(cfg gossipSyncerCfg) *GossipSyncer {
 		syncTransitionReqs: make(chan *syncTransitionReq),
 		historicalSyncReqs: make(chan struct{}),
 		gossipMsgs:         make(chan lnwire.Message, 100),
+		queryMsgs:          make(chan lnwire.Message, 100),
 		quit:               make(chan struct{}),
 	}
 }
@@ -319,8 +322,9 @@ func (g *GossipSyncer) Start() {
 	g.started.Do(func() {
 		log.Debugf("Starting GossipSyncer(%x)", g.cfg.peerPub[:])
 
-		g.wg.Add(1)
+		g.wg.Add(2)
 		go g.channelGraphSyncer()
+		go g.replyHandler()
 	})
 }
 
@@ -403,14 +407,6 @@ func (g *GossipSyncer) channelGraphSyncer() {
 					continue
 				}
 
-				// Otherwise, it's the remote peer performing a
-				// query, which we'll attempt to reply to.
-				err := g.replyPeerQueries(msg)
-				if err != nil && err != ErrGossipSyncerExiting {
-					log.Errorf("unable to reply to peer "+
-						"query: %v", err)
-				}
-
 			case <-g.quit:
 				return
 			}
@@ -457,14 +453,6 @@ func (g *GossipSyncer) channelGraphSyncer() {
 					continue
 				}
 
-				// Otherwise, it's the remote peer performing a
-				// query, which we'll attempt to deploy to.
-				err := g.replyPeerQueries(msg)
-				if err != nil && err != ErrGossipSyncerExiting {
-					log.Errorf("unable to reply to peer "+
-						"query: %v", err)
-				}
-
 			case <-g.quit:
 				return
 			}
@@ -497,13 +485,6 @@ func (g *GossipSyncer) channelGraphSyncer() {
 			// messages or process any state transitions and exit if
 			// needed.
 			select {
-			case msg := <-g.gossipMsgs:
-				err := g.replyPeerQueries(msg)
-				if err != nil && err != ErrGossipSyncerExiting {
-					log.Errorf("unable to reply to peer "+
-						"query: %v", err)
-				}
-
 			case req := <-g.syncTransitionReqs:
 				req.errChan <- g.handleSyncTransition(req)
 
@@ -513,6 +494,24 @@ func (g *GossipSyncer) channelGraphSyncer() {
 			case <-g.quit:
 				return
 			}
+		}
+	}
+}
+
+func (g *GossipSyncer) replyHandler() {
+	defer g.wg.Done()
+
+	for {
+		select {
+		case msg := <-g.queryMsgs:
+			err := g.replyPeerQueries(msg)
+			if err != nil && err != ErrGossipSyncerExiting {
+				log.Errorf("unable to reply to peer "+
+					"query: %v", err)
+			}
+
+		case <-g.quit:
+			return
 		}
 	}
 }
@@ -1042,8 +1041,16 @@ func (g *GossipSyncer) FilterGossipMsgs(msgs ...msgWithSenders) {
 // ProcessQueryMsg is used by outside callers to pass new channel time series
 // queries to the internal processing goroutine.
 func (g *GossipSyncer) ProcessQueryMsg(msg lnwire.Message, peerQuit <-chan struct{}) {
+	var gossipChan chan lnwire.Message
+	switch msg.(type) {
+	case *lnwire.QueryChannelRange, *lnwire.QueryShortChanIDs:
+		gossipChan = g.queryMsgs
+	default:
+		gossipChan = g.gossipMsgs
+	}
+
 	select {
-	case g.gossipMsgs <- msg:
+	case gossipChan <- msg:
 	case <-peerQuit:
 	case <-g.quit:
 	}

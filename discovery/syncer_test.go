@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"fmt"
 	"math"
 	"reflect"
 	"testing"
@@ -1455,7 +1456,7 @@ func TestGossipSyncerRoutineSync(t *testing.T) {
 			case <-time.After(time.Second * 2):
 				t.Fatalf("node 2 didn't read msg")
 
-			case syncer2.gossipMsgs <- msg:
+			case syncer2.queryMsgs <- msg:
 
 			}
 		}
@@ -1477,7 +1478,7 @@ func TestGossipSyncerRoutineSync(t *testing.T) {
 			case <-time.After(time.Second * 2):
 				t.Fatalf("node 2 didn't read msg")
 
-			case syncer1.gossipMsgs <- msg:
+			case syncer1.queryMsgs <- msg:
 
 			}
 		}
@@ -1594,7 +1595,7 @@ func TestGossipSyncerRoutineSync(t *testing.T) {
 				case <-time.After(time.Second * 2):
 					t.Fatalf("node 2 didn't read msg")
 
-				case syncer2.gossipMsgs <- msg:
+				case syncer2.queryMsgs <- msg:
 
 				}
 			}
@@ -1616,7 +1617,7 @@ func TestGossipSyncerRoutineSync(t *testing.T) {
 				case <-time.After(time.Second * 2):
 					t.Fatalf("node 2 didn't read msg")
 
-				case syncer1.gossipMsgs <- msg:
+				case syncer1.queryMsgs <- msg:
 
 				}
 			}
@@ -1647,6 +1648,9 @@ func TestGossipSyncerRoutineSync(t *testing.T) {
 
 		case msgs := <-msgChan1:
 			for _, msg := range msgs {
+				fmt.Printf("recv msg from 1: %T", msg)
+			}
+			for _, msg := range msgs {
 				// The message MUST be a ReplyShortChanIDsEnd message.
 				_, ok := msg.(*lnwire.ReplyShortChanIDsEnd)
 				if !ok {
@@ -1668,6 +1672,9 @@ func TestGossipSyncerRoutineSync(t *testing.T) {
 			t.Fatalf("didn't get msg from syncer1")
 
 		case msgs := <-msgChan2:
+			for _, msg := range msgs {
+				fmt.Printf("recv msg from 2: %T", msg)
+			}
 			for _, msg := range msgs {
 				// The message MUST be a ReplyShortChanIDsEnd message.
 				_, ok := msg.(*lnwire.ReplyShortChanIDsEnd)
@@ -1795,7 +1802,7 @@ func TestGossipSyncerAlreadySynced(t *testing.T) {
 			case <-time.After(time.Second * 2):
 				t.Fatalf("node 2 didn't read msg")
 
-			case syncer2.gossipMsgs <- msg:
+			case syncer2.queryMsgs <- msg:
 
 			}
 		}
@@ -1817,7 +1824,7 @@ func TestGossipSyncerAlreadySynced(t *testing.T) {
 			case <-time.After(time.Second * 2):
 				t.Fatalf("node 2 didn't read msg")
 
-			case syncer1.gossipMsgs <- msg:
+			case syncer1.queryMsgs <- msg:
 
 			}
 		}
