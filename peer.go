@@ -1404,15 +1404,21 @@ func (p *peer) logWireMessage(msg lnwire.Message, read bool) {
 }
 
 // writeMessage writes the target lnwire.Message to the remote peer.
-func (p *peer) writeMessage(msg lnwire.Message) error {
+func (p *peer) writeMessage(msg lnwire.Message, bodyOnly bool) (bool, error) {
 	// Simply exit if we're shutting down.
 	if atomic.LoadInt32(&p.disconnect) != 0 {
-		return ErrPeerExiting
+		return false, ErrPeerExiting
 	}
 
 	p.logWireMessage(msg, false)
 
+	noiseConn, ok := p.conn.(*brontide.Conn)
+	if !ok {
+		return false, fmt.Errorf("brontide.Conn required to read messages")
+	}
+
 	var n int
+	var headerWritten = bodyOnly
 	err := p.writePool.Submit(func(buf *bytes.Buffer) error {
 		// Using a buffer allocated by the write pool, encode the
 		// message directly into the buffer.
@@ -1422,15 +1428,24 @@ func (p *peer) writeMessage(msg lnwire.Message) error {
 		}
 
 		// Ensure the write deadline is set before we attempt to send
-		// the message.
+		// either the header or the message.
 		writeDeadline := time.Now().Add(writeMessageTimeout)
-		writeErr = p.conn.SetWriteDeadline(writeDeadline)
+		writeErr = noiseConn.SetWriteDeadline(writeDeadline)
 		if writeErr != nil {
 			return writeErr
 		}
 
-		// Finally, write the message itself in a single swoop.
-		n, writeErr = p.conn.Write(buf.Bytes())
+		if !bodyOnly {
+			length := uint32(len(buf.Bytes()))
+			_, writeErr = noiseConn.WriteHeader(length)
+			if writeErr != nil {
+				return writeErr
+			}
+
+			headerWritten = true
+		}
+
+		n, writeErr = noiseConn.WriteBody(buf.Bytes())
 		return writeErr
 	})
 
@@ -1439,7 +1454,7 @@ func (p *peer) writeMessage(msg lnwire.Message) error {
 		atomic.AddUint64(&p.bytesSent, uint64(n))
 	}
 
-	return err
+	return headerWritten, err
 }
 
 // writeHandler is a goroutine dedicated to reading messages off of an incoming
@@ -1476,6 +1491,7 @@ out:
 			// increased if we encounter a write timeout on the
 			// send.
 			var retryDelay time.Duration
+			var bodyOnly bool
 		retryWithDelay:
 			if retryDelay > 0 {
 				select {
@@ -1506,7 +1522,7 @@ out:
 			// error is encountered, we will catch this and retry
 			// after backing off in case the remote peer is just
 			// slow to process messages from the wire.
-			err := p.writeMessage(outMsg.msg)
+			headerWritten, err := p.writeMessage(outMsg.msg, bodyOnly)
 			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
 				// Increase the retry delay in the event of a
 				// timeout error, this prevents us from
@@ -1528,18 +1544,10 @@ out:
 					"first attempted %v ago", p, retryDelay,
 					time.Since(startTime))
 
+				bodyOnly = headerWritten
+
 				goto retryWithDelay
 			}
-
-			// The write succeeded, reset the idle timer to prevent
-			// us from disconnecting the peer.
-			if !idleTimer.Stop() {
-				select {
-				case <-idleTimer.C:
-				default:
-				}
-			}
-			idleTimer.Reset(idleTimeout)
 
 			// If the peer requested a synchronous write, respond
 			// with the error.
@@ -1552,6 +1560,16 @@ out:
 					"message: %v", err)
 				break out
 			}
+
+			// The write succeeded, reset the idle timer to prevent
+			// us from disconnecting the peer.
+			if !idleTimer.Stop() {
+				select {
+				case <-idleTimer.C:
+				default:
+				}
+			}
+			idleTimer.Reset(idleTimeout)
 
 		case <-p.quit:
 			exitErr = ErrPeerExiting
@@ -2412,7 +2430,8 @@ func (p *peer) sendInitMsg() error {
 		p.localFeatures,
 	)
 
-	return p.writeMessage(msg)
+	_, err := p.writeMessage(msg, false)
+	return err
 }
 
 // resendChanSyncMsg will attempt to find a channel sync message for the closed

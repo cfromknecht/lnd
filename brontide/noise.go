@@ -687,32 +687,58 @@ func (b *Machine) split() {
 // must be used as the AD to the AEAD construction when being decrypted by the
 // other side.
 func (b *Machine) WriteMessage(w io.Writer, p []byte) error {
+	// The full length of the packet is only the packet length, and does
+	// NOT include the MAC.
+	fullLength := uint32(len(p))
+	_, err := b.WriteHeader(w, fullLength)
+	if err != nil {
+		return err
+	}
+
+	_, err = b.WriteBody(w, p)
+	return err
+}
+
+var ErrPartialWrite = errors.New("partial write")
+
+func (b *Machine) WriteHeader(w io.Writer, length uint32) (int, error) {
+	// The total length of each message payload including the MAC size
+	// payload exceed the largest number encodable within a 16-bit unsigned
+	// integer.
+	if length > math.MaxUint16 {
+		return 0, ErrMaxMessageLengthExceeded
+	}
+
+	var pktLen [2]byte
+	binary.BigEndian.PutUint16(pktLen[:], uint16(length))
+
+	// First, write out the encrypted+MAC'd length prefix for the packet.
+	cipherLen := b.sendCipher.Encrypt(nil, nil, pktLen[:])
+
+	return safeWrite(w, cipherLen)
+}
+
+func (b *Machine) WriteBody(w io.Writer, p []byte) (int, error) {
 	// The total length of each message payload including the MAC size
 	// payload exceed the largest number encodable within a 16-bit unsigned
 	// integer.
 	if len(p) > math.MaxUint16 {
-		return ErrMaxMessageLengthExceeded
-	}
-
-	// The full length of the packet is only the packet length, and does
-	// NOT include the MAC.
-	fullLength := uint16(len(p))
-
-	var pktLen [2]byte
-	binary.BigEndian.PutUint16(pktLen[:], fullLength)
-
-	// First, write out the encrypted+MAC'd length prefix for the packet.
-	cipherLen := b.sendCipher.Encrypt(nil, nil, pktLen[:])
-	if _, err := w.Write(cipherLen); err != nil {
-		return err
+		return 0, ErrMaxMessageLengthExceeded
 	}
 
 	// Finally, write out the encrypted packet itself. We only write out a
 	// single packet, as any fragmentation should have taken place at a
 	// higher level.
 	cipherText := b.sendCipher.Encrypt(nil, nil, p)
-	_, err := w.Write(cipherText)
-	return err
+	return safeWrite(w, cipherText)
+}
+
+func safeWrite(w io.Writer, p []byte) (int, error) {
+	n, err := w.Write(p)
+	if err != nil && n > 0 && n < len(p) {
+		return n, ErrPartialWrite
+	}
+	return n, err
 }
 
 // ReadMessage attempts to read the next message from the passed io.Reader. In

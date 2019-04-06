@@ -132,6 +132,14 @@ func (c *Conn) ReadNextBody(buf []byte) ([]byte, error) {
 	return c.noise.ReadBody(c.conn, buf)
 }
 
+func (c *Conn) WriteHeader(length uint32) (int, error) {
+	return c.noise.WriteHeader(c.conn, length)
+}
+
+func (c *Conn) WriteBody(p []byte) (int, error) {
+	return c.noise.WriteBody(c.conn, p)
+}
+
 // Read reads data from the connection.  Read can be made to time out and
 // return an Error with Timeout() == true after a fixed time limit; see
 // SetDeadline and SetReadDeadline.
