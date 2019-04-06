@@ -699,8 +699,6 @@ func (b *Machine) WriteMessage(w io.Writer, p []byte) error {
 	return err
 }
 
-var ErrPartialWrite = errors.New("partial write")
-
 func (b *Machine) WriteHeader(w io.Writer, length uint32) (int, error) {
 	// The total length of each message payload including the MAC size
 	// payload exceed the largest number encodable within a 16-bit unsigned
@@ -736,7 +734,7 @@ func (b *Machine) WriteBody(w io.Writer, p []byte) (int, error) {
 func safeWrite(w io.Writer, p []byte) (int, error) {
 	n, err := w.Write(p)
 	if err != nil && n > 0 && n < len(p) {
-		return n, ErrPartialWrite
+		return n, fmt.Errorf("Partial write (%d/%d) bytes: %v", n, len(p), err)
 	}
 	return n, err
 }
