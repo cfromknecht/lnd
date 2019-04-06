@@ -849,23 +849,17 @@ func (g *GossipSyncer) replyShortChanIDs(query *lnwire.QueryShortChanIDs) error 
 			query.ShortChanIDs[0].ToUint64(), err)
 	}
 
-	// If we didn't find any messages related to those channel ID's, then
-	// we'll send over a reply marking the end of our response, and exit
-	// early.
-	if len(replyMsgs) == 0 {
-		return g.cfg.sendToPeer(&lnwire.ReplyShortChanIDsEnd{
-			ChainHash: query.ChainHash,
-			Complete:  1,
-		})
+	for _, msg := range replyMsgs {
+		err = g.cfg.sendToPeer(msg)
+		if err != nil {
+			return err
+		}
 	}
 
-	// Otherwise, we'll send over our set of messages responding to the
-	// query, with the ending message appended to it.
-	replyMsgs = append(replyMsgs, &lnwire.ReplyShortChanIDsEnd{
+	return g.cfg.sendToPeer(&lnwire.ReplyShortChanIDsEnd{
 		ChainHash: query.ChainHash,
 		Complete:  1,
 	})
-	return g.cfg.sendToPeer(replyMsgs...)
 }
 
 // ApplyGossipFilter applies a gossiper filter sent by the remote node to the
