@@ -1725,8 +1725,8 @@ func (r *ChannelRouter) preparePayment(payment *LightningPayment) (
 // SendToRoute attempts to send a payment with the given hash through the
 // provided route. This function is blocking and will return the obtained
 // preimage if the payment is successful or the full error in case of a failure.
-func (r *ChannelRouter) SendToRoute(hash lntypes.Hash, route *route.Route) (
-	lntypes.Preimage, error) {
+func (r *ChannelRouter) SendToRoute(hash lntypes.Hash, route *route.Route,
+	total lnwire.MilliSatoshi, addr lntypes.Hash) (lntypes.Preimage, error) {
 
 	// Create a payment session for just this route.
 	paySession := r.cfg.SessionSource.NewPaymentSessionForRoute(route)

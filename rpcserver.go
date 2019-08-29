@@ -3144,7 +3144,7 @@ func (r *rpcServer) dispatchPaymentIntent(
 		)
 	} else {
 		preImage, routerErr = r.server.chanRouter.SendToRoute(
-			payIntent.rHash, payIntent.route,
+			payIntent.rHash, payIntent.route, 0, [32]byte{},
 		)
 
 		route = payIntent.route
