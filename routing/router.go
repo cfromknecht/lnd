@@ -23,6 +23,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/multimutex"
+	"github.com/lightningnetwork/lnd/records"
 	"github.com/lightningnetwork/lnd/routing/chainview"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/ticker"
@@ -1734,6 +1735,29 @@ func (r *ChannelRouter) SendToRoute(hash lntypes.Hash, route *route.Route,
 	// Calculate amount paid to receiver.
 	amt := route.TotalAmount - route.TotalFees()
 
+	useMPP := total > 0
+
+	// Verify mpp params, if applicable.
+	switch {
+
+	// The amount of the shard should not be greater than the total.
+	case useMPP && amt > total:
+		return [32]byte{}, fmt.Errorf("amt %v cannot be greater "+
+			"than total %v", amt, total)
+
+	// The payment address should not be empty.
+	case useMPP && addr == lntypes.ZeroHash:
+		return [32]byte{}, fmt.Errorf("payment_addr must be populated " +
+			"for mpp")
+	}
+
+	// If we're using mpp, set the amount in the payment creation info to
+	// the total amount. The route will contain the amount paid in the
+	// shard.
+	if useMPP {
+		amt = total
+	}
+
 	// Record this payment hash with the ControlTower, ensuring it is not
 	// already in-flight.
 	info := &channeldb.PaymentCreationInfo{
@@ -1748,6 +1772,13 @@ func (r *ChannelRouter) SendToRoute(hash lntypes.Hash, route *route.Route,
 		return [32]byte{}, err
 	}
 
+	// If the sender requested mpp, create a record for the final hop that
+	// will encode the total_msat and payment_addr fields.
+	var recs []tlv.Record
+	if useMPP {
+		recs = append(recs, records.NewMPP(uint64(total), addr).TLV())
+	}
+
 	// Create a (mostly) dummy payment, as the created payment session is
 	// not going to do path finding.
 	// TODO(halseth): sendPayment doesn't really need LightningPayment, make
@@ -1756,7 +1787,8 @@ func (r *ChannelRouter) SendToRoute(hash lntypes.Hash, route *route.Route,
 	// PayAttemptTime doesn't need to be set, as there is only a single
 	// attempt.
 	payment := &LightningPayment{
-		PaymentHash: hash,
+		PaymentHash:      hash,
+		FinalDestRecords: recs,
 	}
 
 	// Since this is the first time this payment is being made, we pass nil
