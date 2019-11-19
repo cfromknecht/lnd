@@ -216,8 +216,16 @@ func (fv *RawFeatureVector) Encode(w io.Writer) error {
 	return fv.encode(w, length, 8)
 }
 
+// EncodeBase256 writes the feature vector in base256 representation. Every
+// feature is encoded as a bit, and the bit vector is serialized using the least
+// number of bytes.
+func (fv *RawFeatureVector) EncodeBase256(w io.Writer) error {
+	length := fv.SerializeSize()
+	return fv.encode(w, length, 8)
+}
+
 // EncodeBase32 writes the feature vector in base32 representation. Every feature
-// encoded as a bit, and the bit vector is serialized using the least number of
+// is encoded as a bit, and the bit vector is serialized using the least number of
 // bytes.
 func (fv *RawFeatureVector) EncodeBase32(w io.Writer) error {
 	length := fv.SerializeSize32()
@@ -251,6 +259,13 @@ func (fv *RawFeatureVector) Decode(r io.Reader) error {
 	length := binary.BigEndian.Uint16(l[:])
 
 	return fv.decode(r, int(length), 8)
+}
+
+// DecodeBase256 reads the feature vector from its base256 representation. Every
+// feature encoded as a bit, and the bit vector is serialized using the least
+// number of bytes.
+func (fv *RawFeatureVector) DecodeBase256(r io.Reader, length int) error {
+	return fv.decode(r, length, 8)
 }
 
 // DecodeBase32 reads the feature vector from its base32 representation. Every
