@@ -2562,10 +2562,6 @@ var addInvoiceCommand = cli.Command{
 				"with the invoice (default=\"\")",
 		},
 		cli.StringFlag{
-			Name:  "receipt",
-			Usage: "an optional cryptographic receipt of payment",
-		},
-		cli.StringFlag{
 			Name: "preimage",
 			Usage: "the hex-encoded preimage (32 byte) which will " +
 				"allow settling an incoming HTLC payable to this " +
@@ -2609,7 +2605,6 @@ func addInvoice(ctx *cli.Context) error {
 	var (
 		preimage []byte
 		descHash []byte
-		receipt  []byte
 		amt      int64
 		err      error
 	)
@@ -2646,14 +2641,8 @@ func addInvoice(ctx *cli.Context) error {
 		return fmt.Errorf("unable to parse description_hash: %v", err)
 	}
 
-	receipt, err = hex.DecodeString(ctx.String("receipt"))
-	if err != nil {
-		return fmt.Errorf("unable to parse receipt: %v", err)
-	}
-
 	invoice := &lnrpc.Invoice{
 		Memo:            ctx.String("memo"),
-		Receipt:         receipt,
 		RPreimage:       preimage,
 		Value:           amt,
 		DescriptionHash: descHash,
