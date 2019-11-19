@@ -18,9 +18,9 @@ const (
 	// in the database.
 	MaxMemoSize = 1024
 
-	// MaxReceiptSize is the maximum size of the payment receipt stored
+	// maxReceiptSize is the maximum size of the payment receipt stored
 	// within the database along side incoming/outgoing invoices.
-	MaxReceiptSize = 1024
+	maxReceiptSize = 1024
 
 	// MaxPaymentRequestSize is the max size of a payment request for
 	// this invoice.
@@ -42,7 +42,28 @@ const (
 	acceptTimeType   tlv.Type = 9
 	resolveTimeType  tlv.Type = 11
 	expiryHeightType tlv.Type = 13
-	stateType        tlv.Type = 15
+	htlcStateType    tlv.Type = 15
+
+	// A set of tlv type definitions used to serialie invoice bodies.
+	//
+	// NOTE: A migration should be added whenever this list changes. This
+	// prevents against the database being rolled back to an older
+	// format where the surrounding logic might assume a different set of
+	// fields are known.
+	memoType        tlv.Type = 0
+	payReqType      tlv.Type = 1
+	createTimeType  tlv.Type = 2
+	settleTimeType  tlv.Type = 3
+	addIndexType    tlv.Type = 4
+	settleIndexType tlv.Type = 5
+	preimageType    tlv.Type = 6
+	valueType       tlv.Type = 7
+	cltvDeltaType   tlv.Type = 8
+	expiryType      tlv.Type = 9
+	paymentAddrType tlv.Type = 10
+	featuresType    tlv.Type = 11
+	invStateType    tlv.Type = 12
+	amtPaidType     tlv.Type = 13
 )
 
 var (
@@ -51,6 +72,12 @@ var (
 	// decoded because the byte slice is of an invalid length.
 	ErrInvalidCircuitKeyLen = fmt.Errorf(
 		"length of serialized circuit key must be 16 bytes")
+
+	// invoiceBucket is the name of the bucket within the database that
+	// stores all data related to invoices no matter their final state.
+	// Within the invoice bucket, each invoice is keyed by its invoice ID
+	// which is a monotonically increasing uint32.
+	invoiceBucket = []byte("invoices")
 
 	// Big endian is the preferred byte order, due to cursor scans over
 	// integer keys iterating in order.
@@ -182,6 +209,13 @@ type ContractTerm struct {
 
 	// Expiry defines how long after creation this invoice should expire.
 	Expiry time.Duration
+
+	// PaymentAddr is a randomly generated value include in the MPP record
+	// by the sender to prevent probing of the receiver.
+	PaymentAddr [32]byte
+
+	// Features is the feature vectors advertised on the payment request.
+	Features *lnwire.FeatureVector
 }
 
 // InvoiceHTLC contains details about an htlc paying to this invoice.
@@ -226,12 +260,6 @@ type Invoice struct {
 	// memo may contain further details pertaining to the invoice itself,
 	// or any other message which fits within the size constraints.
 	Memo []byte
-
-	// Receipt is an optional field dedicated for storing a
-	// cryptographically binding receipt of payment.
-	//
-	// TODO(roasbeef): document scheme.
-	Receipt []byte
 
 	// PaymentRequest is an optional field where a payment request created
 	// for this invoice can be stored.
@@ -289,73 +317,73 @@ type Invoice struct {
 // would modify the on disk format, make a copy of the original code and store
 // it with the migration.
 func SerializeInvoice(w io.Writer, i *Invoice) error {
-	if err := wire.WriteVarBytes(w, 0, i.Memo[:]); err != nil {
-		return err
-	}
-	if err := wire.WriteVarBytes(w, 0, i.Receipt[:]); err != nil {
-		return err
-	}
-	if err := wire.WriteVarBytes(w, 0, i.PaymentRequest[:]); err != nil {
-		return err
-	}
-
-	err := binary.Write(w, byteOrder, i.Terms.FinalCltvDelta)
+	creationDateBytes, err := i.CreationDate.MarshalBinary()
 	if err != nil {
 		return err
 	}
 
-	err = binary.Write(w, byteOrder, int64(i.Terms.Expiry))
+	settleDateBytes, err := i.SettleDate.MarshalBinary()
 	if err != nil {
 		return err
 	}
 
-	birthBytes, err := i.CreationDate.MarshalBinary()
+	var fb bytes.Buffer
+	err = i.Terms.Features.EncodeBase256(&fb)
+	if err != nil {
+		return err
+	}
+	featureBytes := fb.Bytes()
+
+	preimage := [32]byte(i.Terms.PaymentPreimage)
+	value := uint64(i.Terms.Value)
+	cltvDelta := uint32(i.Terms.FinalCltvDelta)
+	expiry := uint64(i.Terms.Expiry)
+
+	amtPaid := uint64(i.AmtPaid)
+	state := uint8(i.State)
+
+	tlvStream, err := tlv.NewStream(
+		// Memo and payreq.
+		tlv.MakePrimitiveRecord(memoType, &i.Memo),
+		tlv.MakePrimitiveRecord(payReqType, &i.PaymentRequest),
+
+		// Add/settle metadata.
+		tlv.MakePrimitiveRecord(createTimeType, &creationDateBytes),
+		tlv.MakePrimitiveRecord(settleTimeType, &settleDateBytes),
+		tlv.MakePrimitiveRecord(addIndexType, &i.AddIndex),
+		tlv.MakePrimitiveRecord(settleIndexType, &i.SettleIndex),
+
+		// Terms.
+		tlv.MakePrimitiveRecord(preimageType, &preimage),
+		tlv.MakePrimitiveRecord(valueType, &value),
+		tlv.MakePrimitiveRecord(cltvDeltaType, &cltvDelta),
+		tlv.MakePrimitiveRecord(expiryType, &expiry),
+		tlv.MakePrimitiveRecord(paymentAddrType, &i.Terms.PaymentAddr),
+		tlv.MakePrimitiveRecord(featuresType, &featureBytes),
+
+		// Invoice state.
+		tlv.MakePrimitiveRecord(invStateType, &state),
+		tlv.MakePrimitiveRecord(amtPaidType, &amtPaid),
+	)
 	if err != nil {
 		return err
 	}
 
-	if err := wire.WriteVarBytes(w, 0, birthBytes); err != nil {
+	var b bytes.Buffer
+	if err = tlvStream.Encode(&b); err != nil {
 		return err
 	}
 
-	settleBytes, err := i.SettleDate.MarshalBinary()
+	err = binary.Write(w, byteOrder, uint64(b.Len()))
 	if err != nil {
 		return err
 	}
 
-	if err := wire.WriteVarBytes(w, 0, settleBytes); err != nil {
+	if _, err = w.Write(b.Bytes()); err != nil {
 		return err
 	}
 
-	if _, err := w.Write(i.Terms.PaymentPreimage[:]); err != nil {
-		return err
-	}
-
-	var scratch [8]byte
-	byteOrder.PutUint64(scratch[:], uint64(i.Terms.Value))
-	if _, err := w.Write(scratch[:]); err != nil {
-		return err
-	}
-
-	if err := binary.Write(w, byteOrder, i.State); err != nil {
-		return err
-	}
-
-	if err := binary.Write(w, byteOrder, i.AddIndex); err != nil {
-		return err
-	}
-	if err := binary.Write(w, byteOrder, i.SettleIndex); err != nil {
-		return err
-	}
-	if err := binary.Write(w, byteOrder, int64(i.AmtPaid)); err != nil {
-		return err
-	}
-
-	if err := serializeHtlcs(w, i.Htlcs); err != nil {
-		return err
-	}
-
-	return nil
+	return serializeHtlcs(w, i.Htlcs)
 }
 
 // serializeHtlcs serializes a map containing circuit keys and invoice htlcs to
@@ -381,7 +409,7 @@ func serializeHtlcs(w io.Writer, htlcs map[CircuitKey]*InvoiceHTLC) error {
 			tlv.MakePrimitiveRecord(acceptTimeType, &acceptTime),
 			tlv.MakePrimitiveRecord(resolveTimeType, &resolveTime),
 			tlv.MakePrimitiveRecord(expiryHeightType, &htlc.Expiry),
-			tlv.MakePrimitiveRecord(stateType, &state),
+			tlv.MakePrimitiveRecord(htlcStateType, &state),
 		)
 		if err != nil {
 			return err
@@ -408,6 +436,92 @@ func serializeHtlcs(w io.Writer, htlcs map[CircuitKey]*InvoiceHTLC) error {
 }
 
 func DeserializeInvoice(r io.Reader) (Invoice, error) {
+	var (
+		preimage  [32]byte
+		value     uint64
+		cltvDelta uint32
+		expiry    uint64
+		amtPaid   uint64
+		state     uint8
+
+		creationDateBytes []byte
+		settleDateBytes   []byte
+		featureBytes      []byte
+	)
+
+	var i Invoice
+	tlvStream, err := tlv.NewStream(
+		// Memo and payreq.
+		tlv.MakePrimitiveRecord(memoType, &i.Memo),
+		tlv.MakePrimitiveRecord(payReqType, &i.PaymentRequest),
+
+		// Add/settle metadata.
+		tlv.MakePrimitiveRecord(createTimeType, &creationDateBytes),
+		tlv.MakePrimitiveRecord(settleTimeType, &settleDateBytes),
+		tlv.MakePrimitiveRecord(addIndexType, &i.AddIndex),
+		tlv.MakePrimitiveRecord(settleIndexType, &i.SettleIndex),
+
+		// Terms.
+		tlv.MakePrimitiveRecord(preimageType, &preimage),
+		tlv.MakePrimitiveRecord(valueType, &value),
+		tlv.MakePrimitiveRecord(cltvDeltaType, &cltvDelta),
+		tlv.MakePrimitiveRecord(expiryType, &expiry),
+		tlv.MakePrimitiveRecord(paymentAddrType, &i.Terms.PaymentAddr),
+		tlv.MakePrimitiveRecord(featuresType, &featureBytes),
+
+		// Invoice state.
+		tlv.MakePrimitiveRecord(invStateType, &state),
+		tlv.MakePrimitiveRecord(amtPaidType, &amtPaid),
+	)
+	if err != nil {
+		return i, err
+	}
+
+	var bodyLen int64
+	err = binary.Read(r, byteOrder, &bodyLen)
+	if err != nil {
+		return i, err
+	}
+
+	lr := io.LimitReader(r, bodyLen)
+	if err = tlvStream.Decode(lr); err != nil {
+		return i, err
+	}
+
+	i.Terms.PaymentPreimage = lntypes.Preimage(preimage)
+	i.Terms.Value = lnwire.MilliSatoshi(value)
+	i.Terms.FinalCltvDelta = int32(cltvDelta)
+	i.Terms.Expiry = time.Duration(expiry)
+	i.AmtPaid = lnwire.MilliSatoshi(amtPaid)
+	i.State = ContractState(state)
+
+	err = i.CreationDate.UnmarshalBinary(creationDateBytes)
+	if err != nil {
+		return i, err
+	}
+
+	err = i.SettleDate.UnmarshalBinary(settleDateBytes)
+	if err != nil {
+		return i, err
+	}
+
+	rawFeatures := lnwire.NewRawFeatureVector()
+	err = rawFeatures.DecodeBase256(
+		bytes.NewReader(featureBytes), len(featureBytes),
+	)
+	if err != nil {
+		return i, err
+	}
+
+	i.Terms.Features = lnwire.NewFeatureVector(
+		rawFeatures, lnwire.Features,
+	)
+
+	i.Htlcs, err = deserializeHtlcs(r)
+	return i, err
+}
+
+func LegacyDeserializeInvoice(r io.Reader) (Invoice, error) {
 	var err error
 	invoice := Invoice{}
 
@@ -416,7 +530,7 @@ func DeserializeInvoice(r io.Reader) (Invoice, error) {
 	if err != nil {
 		return invoice, err
 	}
-	invoice.Receipt, err = wire.ReadVarBytes(r, 0, MaxReceiptSize, "")
+	_, err = wire.ReadVarBytes(r, 0, maxReceiptSize, "")
 	if err != nil {
 		return invoice, err
 	}
@@ -521,7 +635,7 @@ func deserializeHtlcs(r io.Reader) (map[CircuitKey]*InvoiceHTLC, error) {
 			tlv.MakePrimitiveRecord(acceptTimeType, &acceptTime),
 			tlv.MakePrimitiveRecord(resolveTimeType, &resolveTime),
 			tlv.MakePrimitiveRecord(expiryHeightType, &htlc.Expiry),
-			tlv.MakePrimitiveRecord(stateType, &state),
+			tlv.MakePrimitiveRecord(htlcStateType, &state),
 		)
 		if err != nil {
 			return nil, err

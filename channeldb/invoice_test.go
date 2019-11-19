@@ -10,6 +10,8 @@ import (
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
+var emptyFeatures = lnwire.NewFeatureVector(nil, lnwire.Features)
+
 func randInvoice(value lnwire.MilliSatoshi) (*Invoice, error) {
 	var pre [32]byte
 	if _, err := rand.Read(pre[:]); err != nil {
@@ -24,11 +26,11 @@ func randInvoice(value lnwire.MilliSatoshi) (*Invoice, error) {
 			PaymentPreimage: pre,
 			Value:           value,
 			Expiry:          4000,
+			Features:        emptyFeatures,
 		},
 		Htlcs: map[CircuitKey]*InvoiceHTLC{},
 	}
 	i.Memo = []byte("memo")
-	i.Receipt = []byte("receipt")
 
 	// Create a random byte slice of MaxPaymentRequestSize bytes to be used
 	// as a dummy paymentrequest, and  determine if it should be set based
@@ -62,9 +64,11 @@ func TestInvoiceWorkflow(t *testing.T) {
 		// failures due to the monotonic time component.
 		CreationDate: time.Unix(time.Now().Unix(), 0),
 		Htlcs:        map[CircuitKey]*InvoiceHTLC{},
+		Terms: ContractTerm{
+			Features: emptyFeatures,
+		},
 	}
 	fakeInvoice.Memo = []byte("memo")
-	fakeInvoice.Receipt = []byte("receipt")
 	fakeInvoice.PaymentRequest = []byte("")
 	copy(fakeInvoice.Terms.PaymentPreimage[:], rev[:])
 	fakeInvoice.Terms.Value = lnwire.NewMSatFromSatoshis(10000)

@@ -90,6 +90,8 @@ var (
 	}
 
 	testBatchTimeout = 50 * time.Millisecond
+
+	testFeatures = lnwire.NewFeatureVector(nil, lnwire.Features)
 )
 
 var idSeqNum uint64
@@ -563,6 +565,7 @@ func generatePaymentWithPreimage(invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 			Value:           invoiceAmt,
 			PaymentPreimage: preimage,
 			FinalCltvDelta:  testInvoiceCltvExpiry,
+			Features:        testFeatures,
 		},
 	}
 

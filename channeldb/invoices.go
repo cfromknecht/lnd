@@ -82,10 +82,6 @@ const (
 	// in the database.
 	MaxMemoSize = migration12.MaxMemoSize
 
-	// MaxReceiptSize is the maximum size of the payment receipt stored
-	// within the database along side incoming/outgoing invoices.
-	MaxReceiptSize = migration12.MaxReceiptSize
-
 	// MaxPaymentRequestSize is the max size of a payment request for
 	// this invoice.
 	// TODO(halseth): determine the max length payment request when field
@@ -183,15 +179,13 @@ func validateInvoice(i *Invoice) error {
 		return fmt.Errorf("max length a memo is %v, and invoice "+
 			"of length %v was provided", MaxMemoSize, len(i.Memo))
 	}
-	if len(i.Receipt) > MaxReceiptSize {
-		return fmt.Errorf("max length a receipt is %v, and invoice "+
-			"of length %v was provided", MaxReceiptSize,
-			len(i.Receipt))
-	}
 	if len(i.PaymentRequest) > MaxPaymentRequestSize {
 		return fmt.Errorf("max length of payment request is %v, length "+
 			"provided was %v", MaxPaymentRequestSize,
 			len(i.PaymentRequest))
+	}
+	if i.Terms.Features == nil {
+		return errors.New("invoice must have feature vector")
 	}
 	return nil
 }
@@ -783,7 +777,6 @@ func copySlice(src []byte) []byte {
 func copyInvoice(src *Invoice) *Invoice {
 	dest := Invoice{
 		Memo:           copySlice(src.Memo),
-		Receipt:        copySlice(src.Receipt),
 		PaymentRequest: copySlice(src.PaymentRequest),
 		CreationDate:   src.CreationDate,
 		SettleDate:     src.SettleDate,
@@ -796,6 +789,8 @@ func copyInvoice(src *Invoice) *Invoice {
 			map[CircuitKey]*InvoiceHTLC, len(src.Htlcs),
 		),
 	}
+
+	dest.Terms.Features = src.Terms.Features.Clone()
 
 	for k, v := range src.Htlcs {
 		dest.Htlcs[k] = v
