@@ -385,11 +385,11 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 		CreationDate:   creationDate,
 		Memo:           []byte(invoice.Memo),
 		PaymentRequest: []byte(payReqString),
-		FinalCltvDelta: int32(payReq.MinFinalCLTVExpiry()),
-		Expiry:         payReq.Expiry(),
 		Terms: channeldb.ContractTerm{
 			Value:           amtMSat,
 			PaymentPreimage: paymentPreimage,
+			FinalCltvDelta:  int32(payReq.MinFinalCLTVExpiry()),
+			Expiry:          payReq.Expiry(),
 		},
 	}
 

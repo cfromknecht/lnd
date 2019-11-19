@@ -562,8 +562,8 @@ func generatePaymentWithPreimage(invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 		Terms: channeldb.ContractTerm{
 			Value:           invoiceAmt,
 			PaymentPreimage: preimage,
+			FinalCltvDelta:  testInvoiceCltvExpiry,
 		},
-		FinalCltvDelta: testInvoiceCltvExpiry,
 	}
 
 	htlc := &lnwire.UpdateAddHTLC{

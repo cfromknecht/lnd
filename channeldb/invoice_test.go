@@ -23,9 +23,9 @@ func randInvoice(value lnwire.MilliSatoshi) (*Invoice, error) {
 		Terms: ContractTerm{
 			PaymentPreimage: pre,
 			Value:           value,
+			Expiry:          4000,
 		},
-		Htlcs:  map[CircuitKey]*InvoiceHTLC{},
-		Expiry: 4000,
+		Htlcs: map[CircuitKey]*InvoiceHTLC{},
 	}
 	i.Memo = []byte("memo")
 	i.Receipt = []byte("receipt")
@@ -110,7 +110,7 @@ func TestInvoiceWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to fetch invoice: %v", err)
 	}
-	if dbInvoice2.Terms.State != ContractSettled {
+	if dbInvoice2.State != ContractSettled {
 		t.Fatalf("invoice should now be settled but isn't")
 	}
 	if dbInvoice2.SettleDate.IsZero() {
@@ -359,7 +359,7 @@ func TestDuplicateSettleInvoice(t *testing.T) {
 	// We'll update what we expect the settle invoice to be so that our
 	// comparison below has the correct assumption.
 	invoice.SettleIndex = 1
-	invoice.Terms.State = ContractSettled
+	invoice.State = ContractSettled
 	invoice.AmtPaid = amt
 	invoice.SettleDate = dbInvoice.SettleDate
 	invoice.Htlcs = map[CircuitKey]*InvoiceHTLC{
@@ -675,7 +675,7 @@ func TestQueryInvoices(t *testing.T) {
 // settles the invoice with the given amount.
 func getUpdateInvoice(amt lnwire.MilliSatoshi) InvoiceUpdateCallback {
 	return func(invoice *Invoice) (*InvoiceUpdateDesc, error) {
-		if invoice.Terms.State == ContractSettled {
+		if invoice.State == ContractSettled {
 			return nil, ErrInvoiceAlreadySettled
 		}
 
