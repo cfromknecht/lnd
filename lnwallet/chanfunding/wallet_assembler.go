@@ -46,11 +46,11 @@ type FullIntent struct {
 	signer input.Signer
 }
 
-// BindKeys is a method unique to the FullIntent variant. This allows the
-// caller to decide precisely which keys are used in the final funding
-// transaction. This is kept out of the main Assembler as these may may not
-// necessarily be under full control of the wallet. Only after this method has
-// been executed will CompileFundingTx succeed.
+// BindKeys is a method unique to the FullIntent variant. This allows the caller
+// to decide precisely which keys are used in the final funding transaction.
+// This is kept out of the main Assembler as these may may not necessarily be
+// under full control of the wallet. Only after this method has been executed
+// will CompileFundingTx succeed.
 func (f *FullIntent) BindKeys(localKey *keychain.KeyDescriptor,
 	remoteKey *btcec.PublicKey) {
 
@@ -98,8 +98,7 @@ func (f *FullIntent) CompileFundingTx(extraInputs []*wire.TxIn,
 	txsort.InPlaceSort(fundingTx)
 
 	// Now that the funding tx has been fully assembled, we'll locate the
-	// index of the funding output so we can create our final channel
-	// point.
+	// index of the funding output so we can create our final channel point.
 	_, multiSigIndex := input.FindScriptOutputIndex(
 		fundingTx, fundingOutput.PkScript,
 	)
@@ -177,21 +176,21 @@ type WalletConfig struct {
 	// access to the current set of coins returned by the CoinSource.
 	CoinSelectLocker CoinSelectionLocker
 
-	// CoinLocker is what the WalletAssembler uses to lock coins that may
-	// be used as inputs for a new funding transaction.
+	// CoinLocker is what the WalletAssembler uses to lock coins that may be
+	// used as inputs for a new funding transaction.
 	CoinLocker OutpointLocker
 
 	// Signer allows the WalletAssembler to sign inputs on any potential
 	// funding transactions.
 	Signer input.Signer
 
-	// DustLimit is the current dust limit. We'll use this to ensure that
-	// we don't make dust outputs on the funding transaction.
+	// DustLimit is the current dust limit. We'll use this to ensure that we
+	// don't make dust outputs on the funding transaction.
 	DustLimit btcutil.Amount
 }
 
-// WalletAssembler is an instance of the Assembler interface that is backed by
-// a full wallet. This variant of the Assembler interface will produce the
+// WalletAssembler is an instance of the Assembler interface that is backed by a
+// full wallet. This variant of the Assembler interface will produce the
 // entirety of the funding transaction within the wallet. This implements the
 // typical funding flow that is initiated either on the p2p level or using the
 // CLi.
@@ -199,8 +198,8 @@ type WalletAssembler struct {
 	cfg WalletConfig
 }
 
-// NewWalletAssembler creates a new instance of the WalletAssembler from a
-// fully populated wallet config.
+// NewWalletAssembler creates a new instance of the WalletAssembler from a fully
+// populated wallet config.
 func NewWalletAssembler(cfg WalletConfig) *WalletAssembler {
 	return &WalletAssembler{
 		cfg: cfg,
@@ -209,8 +208,8 @@ func NewWalletAssembler(cfg WalletConfig) *WalletAssembler {
 
 // ProvisionChannel is the main entry point to begin a funding workflow given a
 // fully populated request. The internal WalletAssembler will perform coin
-// selection in a goroutine safe manner, returning an Intent that will allow
-// the caller to finalize the funding process.
+// selection in a goroutine safe manner, returning an Intent that will allow the
+// caller to finalize the funding process.
 //
 // NOTE: To cancel the funding flow the Cancel() method on the returned Intent,
 // MUST be called.
@@ -220,8 +219,8 @@ func (w *WalletAssembler) ProvisionChannel(r *Request) (Intent, error) {
 	var intent Intent
 
 	// We hold the coin select mutex while querying for outputs, and
-	// performing coin selection in order to avoid inadvertent double
-	// spends across funding transactions.
+	// performing coin selection in order to avoid inadvertent double spends
+	// across funding transactions.
 	err := w.cfg.CoinSelectLocker.WithCoinSelectLock(func() error {
 		log.Infof("Performing funding tx coin selection using %v "+
 			"sat/kw as fee rate", int64(r.FeeRate))
@@ -276,9 +275,9 @@ func (w *WalletAssembler) ProvisionChannel(r *Request) (Intent, error) {
 			}
 		}
 
-		// Record any change output(s) generated as a result of the
-		// coin selection, but only if the addition of the output won't
-		// lead to the creation of dust.
+		// Record any change output(s) generated as a result of the coin
+		// selection, but only if the addition of the output won't lead
+		// to the creation of dust.
 		var changeOutput *wire.TxOut
 		if changeAmt != 0 && changeAmt > w.cfg.DustLimit {
 			changeAddr, err := r.ChangeAddr()
@@ -296,9 +295,9 @@ func (w *WalletAssembler) ProvisionChannel(r *Request) (Intent, error) {
 			}
 		}
 
-		// Lock the selected coins. These coins are now "reserved",
-		// this prevents concurrent funding requests from referring to
-		// and this double-spending the same set of coins.
+		// Lock the selected coins. These coins are now "reserved", this
+		// prevents concurrent funding requests from referring to and
+		// this double-spending the same set of coins.
 		for _, coin := range selectedCoins {
 			outpoint := coin.OutPoint
 

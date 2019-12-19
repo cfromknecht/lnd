@@ -67,34 +67,32 @@ type Request struct {
 	// SubtractFees should be set if we intend to spend exactly LocalAmt
 	// when opening the channel, subtracting the fees from the funding
 	// output. This can be used for instance to use all our remaining funds
-	// to open the channel, since it will take fees into
-	// account.
+	// to open the channel, since it will take fees into account.
 	SubtractFees bool
 
-	// FeeRate is the fee rate in sat/kw that the funding transaction
-	// should carry.
+	// FeeRate is the fee rate in sat/kw that the funding transaction should
+	// carry.
 	FeeRate chainfee.SatPerKWeight
 
-	// ChangeAddr is a closure that will provide the Assembler with a
-	// change address for the funding transaction if needed.
+	// ChangeAddr is a closure that will provide the Assembler with a change
+	// address for the funding transaction if needed.
 	ChangeAddr func() (btcutil.Address, error)
 }
 
 // Intent is returned by an Assembler and represents the base functionality the
-// caller needs to proceed with channel funding on a higher level. If the
-// Cancel method is called, then all resources assembled to fund the channel
-// will be released back to the eligible pool.
+// caller needs to proceed with channel funding on a higher level. If the Cancel
+// method is called, then all resources assembled to fund the channel will be
+// released back to the eligible pool.
 type Intent interface {
-	// FundingOutput returns the witness script, and the output that
-	// creates the funding output.
+	// FundingOutput returns the witness script, and the output that creates
+	// the funding output.
 	FundingOutput() ([]byte, *wire.TxOut, error)
 
 	// ChanPoint returns the final outpoint that will create the funding
 	// output described above.
 	ChanPoint() (*wire.OutPoint, error)
 
-	// RemoteFundingAmt is the amount the remote party put into the
-	// channel.
+	// RemoteFundingAmt is the amount the remote party put into the channel.
 	RemoteFundingAmt() btcutil.Amount
 
 	// LocalFundingAmt is the amount we put into the channel. This may
@@ -117,10 +115,10 @@ type Intent interface {
 // factories.
 type Assembler interface {
 	// ProvisionChannel returns a populated Intent that can be used to
-	// further the channel funding workflow. Depending on the
-	// implementation of Assembler, additional state machine (Intent)
-	// actions may be required before the FundingOutput and ChanPoint are
-	// made available to the caller.
+	// further the channel funding workflow. Depending on the implementation
+	// of Assembler, additional state machine (Intent) actions may be
+	// required before the FundingOutput and ChanPoint are made available to
+	// the caller.
 	ProvisionChannel(*Request) (Intent, error)
 }
 
@@ -130,8 +128,8 @@ type Assembler interface {
 type FundingTxAssembler interface {
 	Assembler
 
-	// FundingTxAvailable is an empty method that an assembler can
-	// implement to signal to callers that its able to provide the funding
-	// transaction for the channel via the intent it returns.
+	// FundingTxAvailable is an empty method that an assembler can implement
+	// to signal to callers that its able to provide the funding transaction
+	// for the channel via the intent it returns.
 	FundingTxAvailable()
 }

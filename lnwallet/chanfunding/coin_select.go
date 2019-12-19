@@ -10,9 +10,9 @@ import (
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
 )
 
-// ErrInsufficientFunds is a type matching the error interface which is
-// returned when coin selection for a new funding transaction fails to due
-// having an insufficient amount of confirmed funds.
+// ErrInsufficientFunds is a type matching the error interface which is returned
+// when coin selection for a new funding transaction fails to due having an
+// insufficient amount of confirmed funds.
 type ErrInsufficientFunds struct {
 	amountAvailable btcutil.Amount
 	amountSelected  btcutil.Amount
@@ -80,8 +80,8 @@ func CoinSelect(feeRate chainfee.SatPerKWeight, amt btcutil.Amount,
 				weightEstimate.AddNestedP2WKHInput()
 
 			default:
-				return nil, 0, fmt.Errorf("unsupported address type: %x",
-					utxo.PkScript)
+				return nil, 0, fmt.Errorf("unsupported "+
+					"address type: %x", utxo.PkScript)
 			}
 		}
 
@@ -92,8 +92,8 @@ func CoinSelect(feeRate chainfee.SatPerKWeight, amt btcutil.Amount,
 		//
 		// TODO: Handle wallets that generate non-witness change
 		// addresses.
-		// TODO(halseth): make coinSelect not estimate change output
-		// for dust change.
+		// TODO(halseth): make coinSelect not estimate change output for
+		// dust change.
 		weightEstimate.AddP2WKHOutput()
 
 		// The difference between the selected amount and the amount
@@ -127,8 +127,8 @@ func CoinSelectSubtractFees(feeRate chainfee.SatPerKWeight, amt,
 	dustLimit btcutil.Amount, coins []Coin) ([]Coin, btcutil.Amount,
 	btcutil.Amount, error) {
 
-	// First perform an initial round of coin selection to estimate
-	// the required fee.
+	// First perform an initial round of coin selection to estimate the
+	// required fee.
 	totalSat, selectedUtxos, err := selectInputs(amt, coins)
 	if err != nil {
 		return nil, 0, 0, err
@@ -153,17 +153,15 @@ func CoinSelectSubtractFees(feeRate chainfee.SatPerKWeight, amt,
 	// Channel funding multisig output is P2WSH.
 	weightEstimate.AddP2WSHOutput()
 
-	// At this point we've got two possibilities, either create a
-	// change output, or not. We'll first try without creating a
-	// change output.
+	// At this point we've got two possibilities, either create a change
+	// output, or not. We'll first try without creating a change output.
 	//
-	// Estimate the fee required for a transaction without a change
-	// output.
+	// Estimate the fee required for a transaction without a change output.
 	totalWeight := int64(weightEstimate.Weight())
 	requiredFee := feeRate.FeeForWeight(totalWeight)
 
-	// For a transaction without a change output, we'll let everything go
-	// to our multi-sig output after subtracting fees.
+	// For a transaction without a change output, we'll let everything go to
+	// our multi-sig output after subtracting fees.
 	outputAmt := totalSat - requiredFee
 	changeAmt := btcutil.Amount(0)
 
@@ -175,14 +173,12 @@ func CoinSelectSubtractFees(feeRate chainfee.SatPerKWeight, amt,
 			requiredFee, dustLimit)
 	}
 
-	// We were able to create a transaction with no change from the
-	// selected inputs. We'll remember the resulting values for
-	// now, while we try to add a change output. Assume that change output
-	// is a P2WKH output.
+	// We were able to create a transaction with no change from the selected
+	// inputs. We'll remember the resulting values for now, while we try to
+	// add a change output. Assume that change output is a P2WKH output.
 	weightEstimate.AddP2WKHOutput()
 
-	// Now that we have added the change output, redo the fee
-	// estimate.
+	// Now that we have added the change output, redo the fee estimate.
 	totalWeight = int64(weightEstimate.Weight())
 	requiredFee = feeRate.FeeForWeight(totalWeight)
 
@@ -191,16 +187,16 @@ func CoinSelectSubtractFees(feeRate chainfee.SatPerKWeight, amt,
 	newChange := totalSat - amt
 	newOutput := amt - requiredFee
 
-	// If adding a change output leads to both outputs being above
-	// the dust limit, we'll add the change output. Otherwise we'll
-	// go with the no change tx we originally found.
+	// If adding a change output leads to both outputs being above the dust
+	// limit, we'll add the change output. Otherwise we'll go with the no
+	// change tx we originally found.
 	if newChange > dustLimit && newOutput > dustLimit {
 		outputAmt = newOutput
 		changeAmt = newChange
 	}
 
-	// Sanity check the resulting output values to make sure we
-	// don't burn a great part to fees.
+	// Sanity check the resulting output values to make sure we don't burn a
+	// great part to fees.
 	totalOut := outputAmt + changeAmt
 	fee := totalSat - totalOut
 

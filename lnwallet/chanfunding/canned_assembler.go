@@ -66,8 +66,8 @@ func (s *ShimIntent) LocalFundingAmt() btcutil.Amount {
 }
 
 // LocalFundingAmt is the amount we put into the channel. This may differ from
-// the local amount requested, as depending on coin selection, we may bleed
-// from of that LocalAmt into fees to minimize change.
+// the local amount requested, as depending on coin selection, we may bleed from
+// of that LocalAmt into fees to minimize change.
 //
 // NOTE: This method satisfies the chanfunding.Intent interface.
 func (s *ShimIntent) RemoteFundingAmt() btcutil.Amount {

@@ -41,8 +41,8 @@ func fundingFee(feeRate chainfee.SatPerKWeight, numInput int, // nolint:unparam
 	return feeRate.FeeForWeight(totalWeight)
 }
 
-// TestCoinSelect tests that we pick coins adding up to the expected amount
-// when creating a funding transaction, and that the calculated change is the
+// TestCoinSelect tests that we pick coins adding up to the expected amount when
+// creating a funding transaction, and that the calculated change is the
 // expected amount.
 //
 // NOTE: coinSelect will always attempt to add a change output, so we must
@@ -66,8 +66,8 @@ func TestCoinSelect(t *testing.T) {
 	testCases := []testCase{
 		{
 			// We have 1.0 BTC available, and wants to send 0.5.
-			// This will obviously lead to a change output of
-			// almost 0.5 BTC.
+			// This will obviously lead to a change output of almost
+			// 0.5 BTC.
 			name: "big change",
 			coins: []Coin{
 				{
@@ -170,7 +170,8 @@ func TestCoinSelect(t *testing.T) {
 				t.Fatalf("expected error")
 			}
 
-			// If we got an expected error, there is nothing more to test.
+			// If we got an expected error, there is nothing more to
+			// test.
 			if test.expectErr {
 				return
 			}
@@ -198,9 +199,9 @@ func TestCoinSelect(t *testing.T) {
 	}
 }
 
-// TestCoinSelectSubtractFees tests that we pick coins adding up to the
-// expected amount when creating a funding transaction, and that a change
-// output is created only when necessary.
+// TestCoinSelectSubtractFees tests that we pick coins adding up to the expected
+// amount when creating a funding transaction, and that a change output is
+// created only when necessary.
 func TestCoinSelectSubtractFees(t *testing.T) {
 	t.Parallel()
 
@@ -280,7 +281,8 @@ func TestCoinSelectSubtractFees(t *testing.T) {
 			expectedChange:     0,
 		},
 		{
-			// We got just enough funds to create an output above the dust limit.
+			// We got just enough funds to create an output above
+			// the dust limit.
 			name: "output right above dustlimit",
 			coins: []Coin{
 				{
@@ -319,7 +321,8 @@ func TestCoinSelectSubtractFees(t *testing.T) {
 			expectedChange:     0,
 		},
 		{
-			// If more than 20% of funds goes to fees, it should fail.
+			// If more than 20% of funds goes to fees, it should
+			// fail.
 			name: "high fee",
 			coins: []Coin{
 				{
@@ -350,7 +353,8 @@ func TestCoinSelectSubtractFees(t *testing.T) {
 				t.Fatalf("expected error")
 			}
 
-			// If we got an expected error, there is nothing more to test.
+			// If we got an expected error, there is nothing more to
+			// test.
 			if test.expectErr {
 				return
 			}
