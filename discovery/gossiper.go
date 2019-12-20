@@ -1844,43 +1844,12 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 			break
 
 		case channeldb.ErrZombieEdge:
-			// Since we've deemed the update as not stale above,
-			// before marking it live, we'll make sure it has been
-			// signed by the correct party. The least-significant
-			// bit in the flag on the channel update tells us which
-			// edge is being updated.
-			var pubKey *btcec.PublicKey
-			switch {
-			case msg.ChannelFlags&lnwire.ChanUpdateDirection == 0:
-				pubKey, _ = chanInfo.NodeKey1()
-			case msg.ChannelFlags&lnwire.ChanUpdateDirection == 1:
-				pubKey, _ = chanInfo.NodeKey2()
-			}
-
-			err := routing.VerifyChannelUpdateSignature(msg, pubKey)
+			err = d.processZombieUpdate(chanInfo, msg)
 			if err != nil {
-				err := fmt.Errorf("unable to verify channel "+
-					"update signature: %v", err)
 				log.Error(err)
 				nMsg.err <- err
 				return nil
 			}
-
-			// With the signature valid, we'll proceed to mark the
-			// edge as live and wait for the channel announcement to
-			// come through again.
-			err = d.cfg.Router.MarkEdgeLive(msg.ShortChannelID)
-			if err != nil {
-				err := fmt.Errorf("unable to remove edge with "+
-					"chan_id=%v from zombie index: %v",
-					msg.ShortChannelID, err)
-				log.Error(err)
-				nMsg.err <- err
-				return nil
-			}
-
-			log.Debugf("Removed edge with chan_id=%v from zombie "+
-				"index", msg.ShortChannelID)
 
 			// We'll fallthrough to ensure we stash the update until
 			// we receive its corresponding ChannelAnnouncement.
@@ -2357,6 +2326,45 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 		nMsg.err <- errors.New("wrong type of the announcement")
 		return nil
 	}
+}
+
+// processZombieUpdate determines whether the provided channel update should
+// resurrect a given zombie edge.
+func (d *AuthenticatedGossiper) processZombieUpdate(
+	chanInfo *channeldb.ChannelEdgeInfo, msg *lnwire.ChannelUpdate) error {
+
+	// Since we've deemed the update as not stale above, before marking it
+	// live, we'll make sure it has been signed by the correct party. The
+	// least-significant bit in the flag on the channel update tells us
+	// which edge is being updated.
+	var pubKey *btcec.PublicKey
+	switch {
+	case msg.ChannelFlags&lnwire.ChanUpdateDirection == 0:
+		pubKey, _ = chanInfo.NodeKey1()
+	case msg.ChannelFlags&lnwire.ChanUpdateDirection == 1:
+		pubKey, _ = chanInfo.NodeKey2()
+	}
+
+	err := routing.VerifyChannelUpdateSignature(msg, pubKey)
+	if err != nil {
+		return fmt.Errorf("unable to verify channel "+
+			"update signature: %v", err)
+	}
+
+	// With the signature valid, we'll proceed to mark the
+	// edge as live and wait for the channel announcement to
+	// come through again.
+	err = d.cfg.Router.MarkEdgeLive(msg.ShortChannelID)
+	if err != nil {
+		return fmt.Errorf("unable to remove edge with "+
+			"chan_id=%v from zombie index: %v",
+			msg.ShortChannelID, err)
+	}
+
+	log.Debugf("Removed edge with chan_id=%v from zombie "+
+		"index", msg.ShortChannelID)
+
+	return nil
 }
 
 // fetchNodeAnn fetches the latest signed node announcement from our point of
