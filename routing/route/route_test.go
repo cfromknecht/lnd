@@ -128,7 +128,7 @@ func TestAMPHop(t *testing.T) {
 		OutgoingTimeLock: 44,
 		AmtToForward:     testAmt,
 		LegacyPayload:    false,
-		AMP:              record.NewAMP([32]byte{}, [32]byte{}, 3),
+		AMP:              record.NewAMP([32]byte{}),
 	}
 
 	// Encoding an AMP record to an intermediate hop w/o an MPP record
@@ -181,7 +181,7 @@ func TestPayloadSize(t *testing.T) {
 			AmtToForward:     1200,
 			OutgoingTimeLock: 700000,
 			MPP:              record.NewMPP(500, [32]byte{}),
-			AMP:              record.NewAMP([32]byte{}, [32]byte{}, 8),
+			AMP:              record.NewAMP([32]byte{}),
 			CustomRecords: map[uint64][]byte{
 				100000:  {1, 2, 3},
 				1000000: {4, 5},

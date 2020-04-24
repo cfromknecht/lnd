@@ -256,7 +256,7 @@ func (h *Hop) PayloadSize(nextChanID uint64) uint64 {
 
 	// Add amp if present.
 	if h.AMP != nil {
-		addRecord(record.AMPOnionType, h.AMP.PayloadSize())
+		addRecord(record.AMPOnionType, record.AMPPayloadSize)
 	}
 
 	// Add custom records.

@@ -17,11 +17,9 @@ type recordEncDecTest struct {
 }
 
 var (
-	testTotal      = lnwire.MilliSatoshi(45)
-	testAddr       = [32]byte{0x01, 0x02}
-	testShare      = [32]byte{0x03, 0x04}
-	testSetID      = [32]byte{0x05, 0x06}
-	testChildIndex = uint16(17)
+	testTotal = lnwire.MilliSatoshi(45)
+	testAddr  = [32]byte{0x01, 0x02}
+	testSetID = [32]byte{0x05, 0x06}
 )
 
 var recordEncDecTests = []recordEncDecTest{
@@ -46,23 +44,15 @@ var recordEncDecTests = []recordEncDecTest{
 	{
 		name: "amp",
 		encRecord: func() tlv.RecordProducer {
-			return record.NewAMP(
-				testShare, testSetID, testChildIndex,
-			)
+			return record.NewAMP(testSetID)
 		},
 		decRecord: func() tlv.RecordProducer {
 			return new(record.AMP)
 		},
 		assert: func(t *testing.T, r interface{}) {
 			amp := r.(*record.AMP)
-			if amp.RootShare() != testShare {
-				t.Fatal("incorrect root share")
-			}
 			if amp.SetID() != testSetID {
 				t.Fatal("incorrect set id")
-			}
-			if amp.ChildIndex() != testChildIndex {
-				t.Fatal("incorrect child index")
 			}
 		},
 	},
