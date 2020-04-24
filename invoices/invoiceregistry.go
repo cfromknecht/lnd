@@ -848,7 +848,7 @@ func (i *InvoiceRegistry) notifyExitHopHtlcLocked(
 	}
 
 	if updateSubscribers {
-		i.notifyClients(ctx.hash, invoice, invoice.State)
+		defer i.notifyClients(ctx.hash, invoice, invoice.State)
 	}
 
 	switch res := resolution.(type) {
