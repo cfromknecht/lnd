@@ -48,6 +48,8 @@ type RegistryConfig struct {
 	// waiting for the other set members to arrive.
 	HtlcHoldDuration time.Duration
 
+	AddPreimages func(...lntypes.Preimage) error
+
 	// Clock holds the clock implementation that is used to provide
 	// Now() and TickAfter() and is useful to stub out the clock functions
 	// during testing.
@@ -63,6 +65,8 @@ type RegistryConfig struct {
 type htlcReleaseEvent struct {
 	// hash is the payment hash of the htlc to release.
 	hash lntypes.Hash
+
+	payAddr *[32]byte
 
 	// key is the circuit key of the htlc to release.
 	key channeldb.CircuitKey
@@ -311,7 +315,8 @@ func (i *InvoiceRegistry) invoiceEventLoop() {
 		case <-nextReleaseTick:
 			event := autoReleaseHeap.Pop().(*htlcReleaseEvent)
 			err := i.cancelSingleHtlc(
-				event.hash, event.key, ResultMppTimeout,
+				event.hash, event.payAddr, event.key,
+				ResultMppTimeout,
 			)
 			if err != nil {
 				log.Errorf("HTLC timer: %v", err)
@@ -465,7 +470,7 @@ func (i *InvoiceRegistry) deliverBacklogEvents(client *InvoiceSubscription) erro
 func (i *InvoiceRegistry) deliverSingleBacklogEvents(
 	client *SingleInvoiceSubscription) error {
 
-	invoice, err := i.cdb.LookupInvoice(client.hash)
+	invoice, err := i.cdb.LookupInvoice(client.hash, client.payAddr)
 
 	// It is possible that the invoice does not exist yet, but the client is
 	// already watching it in anticipation.
@@ -533,17 +538,18 @@ func (i *InvoiceRegistry) LookupInvoice(rHash lntypes.Hash) (channeldb.Invoice,
 
 	// We'll check the database to see if there's an existing matching
 	// invoice.
-	return i.cdb.LookupInvoice(rHash)
+	return i.cdb.LookupInvoice(rHash, nil)
 }
 
 // startHtlcTimer starts a new timer via the invoice registry main loop that
 // cancels a single htlc on an invoice when the htlc hold duration has passed.
-func (i *InvoiceRegistry) startHtlcTimer(hash lntypes.Hash,
+func (i *InvoiceRegistry) startHtlcTimer(hash lntypes.Hash, payAddr *[32]byte,
 	key channeldb.CircuitKey, acceptTime time.Time) error {
 
 	releaseTime := acceptTime.Add(i.cfg.HtlcHoldDuration)
 	event := &htlcReleaseEvent{
 		hash:        hash,
+		payAddr:     payAddr,
 		key:         key,
 		releaseTime: releaseTime,
 	}
@@ -560,7 +566,7 @@ func (i *InvoiceRegistry) startHtlcTimer(hash lntypes.Hash,
 // cancelSingleHtlc cancels a single accepted htlc on an invoice. It takes
 // a resolution result which will be used to notify subscribed links and
 // resolvers of the details of the htlc cancellation.
-func (i *InvoiceRegistry) cancelSingleHtlc(hash lntypes.Hash,
+func (i *InvoiceRegistry) cancelSingleHtlc(hash lntypes.Hash, payAddr *[32]byte,
 	key channeldb.CircuitKey, result FailResolutionResult) error {
 
 	i.Lock()
@@ -610,7 +616,7 @@ func (i *InvoiceRegistry) cancelSingleHtlc(hash lntypes.Hash,
 	// Intercept the update descriptor to set the local updated variable. If
 	// no invoice update is performed, we can return early.
 	var updated bool
-	invoice, err := i.cdb.UpdateInvoice(hash,
+	invoice, err := i.cdb.UpdateInvoice(hash, payAddr,
 		func(invoice *channeldb.Invoice) (
 			*channeldb.InvoiceUpdateDesc, error) {
 
@@ -736,6 +742,12 @@ func (i *InvoiceRegistry) NotifyExitHopHtlc(rHash lntypes.Hash,
 	mpp := payload.MultiPath()
 	amp := payload.AMPRecord()
 
+	var payAddr *[32]byte
+	if mpp != nil {
+		addr := mpp.PaymentAddr()
+		payAddr = &addr
+	}
+
 	// Create the update context containing the relevant details of the
 	// incoming htlc.
 	updateCtx := invoiceUpdateCtx{
@@ -778,7 +790,9 @@ func (i *InvoiceRegistry) NotifyExitHopHtlc(rHash lntypes.Hash,
 	// main event loop.
 	case *htlcAcceptResolution:
 		if r.autoRelease {
-			err := i.startHtlcTimer(rHash, circuitKey, r.acceptTime)
+			err := i.startHtlcTimer(
+				rHash, payAddr, circuitKey, r.acceptTime,
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -805,6 +819,12 @@ func (i *InvoiceRegistry) notifyExitHopHtlcLocked(
 	ctx *invoiceUpdateCtx, hodlChan chan<- interface{}) (
 	HtlcResolution, error) {
 
+	var payAddr *[32]byte
+	if ctx.mpp != nil {
+		addr := ctx.mpp.PaymentAddr()
+		payAddr = &addr
+	}
+
 	// We'll attempt to settle an invoice matching this rHash on disk (if
 	// one exists). The callback will update the invoice state and/or htlcs.
 	var (
@@ -812,7 +832,7 @@ func (i *InvoiceRegistry) notifyExitHopHtlcLocked(
 		updateSubscribers bool
 	)
 	invoice, err := i.cdb.UpdateInvoice(
-		ctx.hash,
+		ctx.hash, payAddr,
 		func(inv *channeldb.Invoice) (
 			*channeldb.InvoiceUpdateDesc, error) {
 
@@ -962,7 +982,7 @@ func (i *InvoiceRegistry) SettleHodlInvoice(preimage lntypes.Preimage) error {
 	}
 
 	hash := preimage.Hash()
-	invoice, err := i.cdb.UpdateInvoice(hash, updateInvoice)
+	invoice, err := i.cdb.UpdateInvoice(hash, nil, updateInvoice)
 	if err != nil {
 		log.Errorf("SettleHodlInvoice with preimage %v: %v",
 			preimage, err)
@@ -1032,7 +1052,7 @@ func (i *InvoiceRegistry) cancelInvoiceImpl(payHash lntypes.Hash,
 		}, nil
 	}
 
-	invoice, err := i.cdb.UpdateInvoice(payHash, updateInvoice)
+	invoice, err := i.cdb.UpdateInvoice(payHash, nil, updateInvoice)
 
 	// Implement idempotency by returning success if the invoice was already
 	// canceled.
@@ -1141,6 +1161,8 @@ type SingleInvoiceSubscription struct {
 	invoiceSubscriptionKit
 
 	hash lntypes.Hash
+
+	payAddr *[32]byte
 
 	// Updates is a channel that we'll use to send all invoice events for
 	// the invoice that is subscribed to.

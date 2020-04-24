@@ -37,6 +37,8 @@ var (
 	// maps: payHash => invoiceKey
 	invoiceIndexBucket = []byte("paymenthashes")
 
+	payAddrIndexBucket = []byte("pay-addr-index")
+
 	// numInvoicesKey is the name of key which houses the auto-incrementing
 	// invoice ID which is essentially used as a primary key. With each
 	// invoice inserted, the primary key is incremented by one. This key is
@@ -475,6 +477,12 @@ func (d *DB) AddInvoice(newInvoice *Invoice, paymentHash lntypes.Hash) (
 		if err != nil {
 			return err
 		}
+		payAddrIndex, err := invoices.CreateBucketIfNotExists(
+			payAddrIndexBucket,
+		)
+		if err != nil {
+			return err
+		}
 		addIndex, err := invoices.CreateBucketIfNotExists(
 			addIndexBucket,
 		)
@@ -485,6 +493,9 @@ func (d *DB) AddInvoice(newInvoice *Invoice, paymentHash lntypes.Hash) (
 		// Ensure that an invoice an identical payment hash doesn't
 		// already exist within the index.
 		if invoiceIndex.Get(paymentHash[:]) != nil {
+			return ErrDuplicateInvoice
+		}
+		if payAddrIndex.Get(newInvoice.Terms.PaymentAddr[:]) != nil {
 			return ErrDuplicateInvoice
 		}
 
@@ -504,8 +515,8 @@ func (d *DB) AddInvoice(newInvoice *Invoice, paymentHash lntypes.Hash) (
 		}
 
 		newIndex, err := putInvoice(
-			invoices, invoiceIndex, addIndex, newInvoice, invoiceNum,
-			paymentHash,
+			invoices, invoiceIndex, payAddrIndex, addIndex,
+			newInvoice, invoiceNum, paymentHash,
 		)
 		if err != nil {
 			return err
@@ -594,7 +605,9 @@ func (d *DB) InvoicesAddedSince(sinceAddIndex uint64) ([]Invoice, error) {
 // full invoice is returned. Before setting the incoming HTLC, the values
 // SHOULD be checked to ensure the payer meets the agreed upon contractual
 // terms of the payment.
-func (d *DB) LookupInvoice(paymentHash [32]byte) (Invoice, error) {
+func (d *DB) LookupInvoice(paymentHash [32]byte,
+	payAddr *[32]byte) (Invoice, error) {
+
 	var invoice Invoice
 	err := kvdb.View(d, func(tx kvdb.ReadTx) error {
 		invoices := tx.ReadBucket(invoiceBucket)
@@ -606,9 +619,17 @@ func (d *DB) LookupInvoice(paymentHash [32]byte) (Invoice, error) {
 			return ErrNoInvoicesCreated
 		}
 
+		payAddrIndex := invoices.NestedReadBucket(payAddrIndexBucket)
+
 		// Check the invoice index to see if an invoice paying to this
 		// hash exists within the DB.
-		invoiceNum := invoiceIndex.Get(paymentHash[:])
+		var invoiceNum []byte
+		if payAddr != nil && payAddrIndex == nil {
+			invoiceNum = payAddrIndex.Get(payAddr[:])
+		}
+		if invoiceNum == nil {
+			invoiceNum = invoiceIndex.Get(paymentHash[:])
+		}
 		if invoiceNum == nil {
 			return ErrInvoiceNotFound
 		}
@@ -880,7 +901,7 @@ func (d *DB) QueryInvoices(q InvoiceQuery) (InvoiceSlice, error) {
 // The update is performed inside the same database transaction that fetches the
 // invoice and is therefore atomic. The fields to update are controlled by the
 // supplied callback.
-func (d *DB) UpdateInvoice(paymentHash lntypes.Hash,
+func (d *DB) UpdateInvoice(paymentHash lntypes.Hash, payAddr *[32]byte,
 	callback InvoiceUpdateCallback) (*Invoice, error) {
 
 	var updatedInvoice *Invoice
@@ -895,6 +916,12 @@ func (d *DB) UpdateInvoice(paymentHash lntypes.Hash,
 		if err != nil {
 			return err
 		}
+		payAddrIndex, err := invoices.CreateBucketIfNotExists(
+			payAddrIndexBucket,
+		)
+		if err != nil {
+			return err
+		}
 		settleIndex, err := invoices.CreateBucketIfNotExists(
 			settleIndexBucket,
 		)
@@ -904,9 +931,15 @@ func (d *DB) UpdateInvoice(paymentHash lntypes.Hash,
 
 		// Check the invoice index to see if an invoice paying to this
 		// hash exists within the DB.
-		invoiceNum := invoiceIndex.Get(paymentHash[:])
+		var invoiceNum []byte
+		if payAddr != nil {
+			invoiceNum = payAddrIndex.Get(payAddr[:])
+		}
 		if invoiceNum == nil {
-			return ErrInvoiceNotFound
+			invoiceNum = invoiceIndex.Get(paymentHash[:])
+			if invoiceNum == nil {
+				return ErrInvoiceNotFound
+			}
 		}
 
 		updatedInvoice, err = d.updateInvoice(
@@ -981,7 +1014,7 @@ func (d *DB) InvoicesSettledSince(sinceSettleIndex uint64) ([]Invoice, error) {
 	return settledInvoices, nil
 }
 
-func putInvoice(invoices, invoiceIndex, addIndex kvdb.RwBucket,
+func putInvoice(invoices, invoiceIndex, payAddrIndex, addIndex kvdb.RwBucket,
 	i *Invoice, invoiceNum uint32, paymentHash lntypes.Hash) (
 	uint64, error) {
 
@@ -1003,6 +1036,10 @@ func putInvoice(invoices, invoiceIndex, addIndex kvdb.RwBucket,
 	// identify if we can settle an incoming payment, and also to possibly
 	// allow a single invoice to have multiple payment installations.
 	err := invoiceIndex.Put(paymentHash[:], invoiceKey[:])
+	if err != nil {
+		return 0, err
+	}
+	err = payAddrIndex.Put(i.Terms.PaymentAddr[:], invoiceKey[:])
 	if err != nil {
 		return 0, err
 	}

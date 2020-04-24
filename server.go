@@ -398,10 +398,16 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 		return nil, err
 	}
 
+	beacon := &preimageBeacon{
+		wCache:      chanDB.NewWitnessCache(),
+		subscribers: make(map[uint64]*preimageSubscriber),
+	}
+
 	registryConfig := invoices.RegistryConfig{
 		FinalCltvRejectDelta: defaultFinalCltvRejectDelta,
 		HtlcHoldDuration:     invoices.DefaultHtlcHoldDuration,
 		Clock:                clock.NewDefaultClock(),
+		AddPreimages:         beacon.AddPreimages,
 		AcceptKeySend:        cfg.AcceptKeySend,
 	}
 
@@ -417,6 +423,7 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 			chanDB, invoices.NewInvoiceExpiryWatcher(clock.NewDefaultClock()),
 			&registryConfig,
 		),
+		witnessBeacon: beacon,
 
 		channelNotifier: channelnotifier.New(chanDB),
 
@@ -447,11 +454,6 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 
 		featureMgr: featureMgr,
 		quit:       make(chan struct{}),
-	}
-
-	s.witnessBeacon = &preimageBeacon{
-		wCache:      chanDB.NewWitnessCache(),
-		subscribers: make(map[uint64]*preimageSubscriber),
 	}
 
 	_, currentHeight, err := s.cc.chainIO.GetBestBlock()

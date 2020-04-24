@@ -14200,7 +14200,7 @@ func testHoldInvoicePersistence(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// Let Carol create hold-invoices for all the payments.
 	var (
-		payAmt         = btcutil.Amount(4)
+		payAmt         = btcutil.Amount(10000)
 		payReqs        []string
 		invoiceStreams []invoicesrpc.Invoices_SubscribeSingleInvoiceClient
 	)
@@ -14415,6 +14415,28 @@ func testHoldInvoicePersistence(net *lntest.NetworkHarness, t *harnessTest) {
 		}
 	}
 
+	_, _, err = net.CloseChannel(ctxt, net.Alice, chanPointAlice, true)
+	if err != nil {
+		t.Fatalf("unable to close channel: %v", err)
+	}
+
+	/*
+		balReq := &lnrpc.WalletBalanceRequest{}
+		ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
+		balResp, err := carol.WalletBalance(ctxt, balReq)
+		if err != nil {
+			t.Fatalf("unable to query wallet balance: %v",
+				err)
+		}
+
+		fmt.Printf("confirmed: %d\n", balResp.ConfirmedBalance)
+		fmt.Printf("unconfirmed: %d\n", balResp.UnconfirmedBalance)
+		fmt.Printf("total: %d\n", balResp.TotalBalance)
+		fmt.Println(spew.Sdump(balResp))
+
+		panic("done")
+	*/
+
 	// Settle invoices half the invoices, cancel the rest.
 	for i, preimage := range preimages {
 		ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
@@ -14435,6 +14457,7 @@ func testHoldInvoicePersistence(net *lntest.NetworkHarness, t *harnessTest) {
 		}
 	}
 
+	/*(
 	// Make sure we get the expected status update.
 	for i, upd := range statusUpdates {
 		// Read until the payment is in a terminal state.
@@ -14471,6 +14494,29 @@ func testHoldInvoicePersistence(net *lntest.NetworkHarness, t *harnessTest) {
 			}
 		}
 	}
+	*/
+
+	for i := 0; i < 5; i++ {
+		if i == 0 {
+			_ = mineBlocks(t, net, 100, 1)
+		} else {
+
+			_ = mineBlocks(t, net, 100, 0)
+		}
+	}
+
+	balReq := &lnrpc.WalletBalanceRequest{}
+	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
+	balResp, err := carol.WalletBalance(ctxt, balReq)
+	if err != nil {
+		t.Fatalf("unable to query wallet balance: %v",
+			err)
+	}
+
+	fmt.Printf("confirmed: %d\n", balResp.ConfirmedBalance)
+	fmt.Printf("unconfirmed: %d\n", balResp.UnconfirmedBalance)
+	fmt.Printf("total: %d\n", balResp.TotalBalance)
+	fmt.Println(spew.Sdump(balResp))
 
 	// Check that Alice's invoices to be shown as settled and failed
 	// accordingly, and preimages matching up.

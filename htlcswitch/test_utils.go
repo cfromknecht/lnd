@@ -548,7 +548,7 @@ func getChanID(msg lnwire.Message) (lnwire.ChannelID, error) {
 // invoice which should be added by destination peer.
 func generatePaymentWithPreimage(invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 	timelock uint32, blob [lnwire.OnionPacketSize]byte,
-	preimage, rhash [32]byte) (*channeldb.Invoice, *lnwire.UpdateAddHTLC,
+	preimage, rhash, payAddr [32]byte) (*channeldb.Invoice, *lnwire.UpdateAddHTLC,
 	uint64, error) {
 
 	// Create the db invoice. Normally the payment requests needs to be set,
@@ -563,6 +563,7 @@ func generatePaymentWithPreimage(invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 			FinalCltvDelta:  testInvoiceCltvExpiry,
 			Value:           invoiceAmt,
 			PaymentPreimage: preimage,
+			PaymentAddr:     payAddr,
 			Features: lnwire.NewFeatureVector(
 				nil, lnwire.Features,
 			),
@@ -598,9 +599,16 @@ func generatePayment(invoiceAmt, htlcAmt lnwire.MilliSatoshi, timelock uint32,
 	}
 	copy(preimage[:], r)
 
+	var payAddr [sha256.Size]byte
+	r, err = generateRandomBytes(sha256.Size)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	copy(payAddr[:], r)
+
 	rhash := fastsha256.Sum256(preimage[:])
 	return generatePaymentWithPreimage(
-		invoiceAmt, htlcAmt, timelock, blob, preimage, rhash,
+		invoiceAmt, htlcAmt, timelock, blob, preimage, rhash, payAddr,
 	)
 }
 
@@ -1329,10 +1337,15 @@ func (n *twoHopNetwork) makeHoldPayment(sendingPeer, receivingPeer lnpeer.Peer,
 
 	rhash := preimage.Hash()
 
+	var payAddr [32]byte
+	if _, err := rand.Read(payAddr[:]); err != nil {
+		panic(err)
+	}
+
 	// Generate payment: invoice and htlc.
 	invoice, htlc, pid, err := generatePaymentWithPreimage(
 		invoiceAmt, htlcAmt, timelock, blob,
-		channeldb.UnknownPreimage, rhash,
+		channeldb.UnknownPreimage, rhash, payAddr,
 	)
 	if err != nil {
 		paymentErr <- err
