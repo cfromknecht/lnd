@@ -18,4 +18,6 @@ type Payload interface {
 	// CustomRecords returns the custom tlv type records that were parsed
 	// from the payload.
 	CustomRecords() record.CustomSet
+
+	SharedSecret() [32]byte
 }

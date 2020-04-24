@@ -93,6 +93,8 @@ type Payload struct {
 	// customRecords are user-defined records in the custom type range that
 	// were included in the payload.
 	customRecords record.CustomSet
+
+	sharedSecret [32]byte
 }
 
 // NewLegacyPayload builds a Payload from the amount, cltv, and next hop
@@ -113,7 +115,7 @@ func NewLegacyPayload(f *sphinx.HopData) *Payload {
 
 // NewPayloadFromReader builds a new Hop from the passed io.Reader. The reader
 // should correspond to the bytes encapsulated in a TLV onion payload.
-func NewPayloadFromReader(r io.Reader) (*Payload, error) {
+func NewPayloadFromReader(r io.Reader, sharedSecret [32]byte) (*Payload, error) {
 	var (
 		cid  uint64
 		amt  uint64
@@ -181,6 +183,7 @@ func NewPayloadFromReader(r io.Reader) (*Payload, error) {
 		MPP:           mpp,
 		AMP:           amp,
 		customRecords: customRecords,
+		sharedSecret:  sharedSecret,
 	}, nil
 }
 
@@ -188,6 +191,10 @@ func NewPayloadFromReader(r io.Reader) (*Payload, error) {
 // e.g. amount, cltv, and next hop.
 func (h *Payload) ForwardingInfo() ForwardingInfo {
 	return h.FwdInfo
+}
+
+func (h *Payload) SharedSecret() [32]byte {
+	return h.sharedSecret
 }
 
 // NewCustomRecords filters the types parsed from the tlv stream for custom

@@ -34,6 +34,10 @@ func (p *mockPayload) AMPRecord() *record.AMP {
 	return p.amp
 }
 
+func (p *mockPayload) SharedSecret() [32]byte {
+	return [32]byte{}
+}
+
 func (p *mockPayload) CustomRecords() record.CustomSet {
 	// This function should always return a map instance, but for mock
 	// configuration we do accept nil.

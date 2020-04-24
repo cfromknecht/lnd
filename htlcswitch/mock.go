@@ -282,6 +282,10 @@ func (r *mockHopIterator) HopPayload() (*hop.Payload, error) {
 	return h, nil
 }
 
+func (r *mockHopIterator) SharedSecret() [32]byte {
+	return [32]byte{}
+}
+
 func (r *mockHopIterator) ExtraOnionBlob() []byte {
 	return nil
 }

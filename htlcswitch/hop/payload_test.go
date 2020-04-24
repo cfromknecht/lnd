@@ -297,7 +297,9 @@ func testDecodeHopPayloadValidation(t *testing.T, test decodePayloadTest) {
 		}
 	)
 
-	p, err := hop.NewPayloadFromReader(bytes.NewReader(test.payload))
+	p, err := hop.NewPayloadFromReader(
+		bytes.NewReader(test.payload), [32]byte{},
+	)
 	if !reflect.DeepEqual(test.expErr, err) {
 		t.Fatalf("expected error mismatch, want: %v, got: %v",
 			test.expErr, err)

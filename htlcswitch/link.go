@@ -2807,7 +2807,26 @@ func (l *channelLink) processExitHop(pd *lnwallet.PaymentDescriptor,
 	// Notify the invoiceRegistry of the exit hop htlc. If we crash right
 	// after this, this code will be re-executed after restart. We will
 	// receive back a resolution event.
-	invoiceHash := lntypes.Hash(pd.RHash)
+	rHash := lntypes.Hash(pd.RHash)
+
+	// If this is an AMP htlc, ensure that the shared secret in the onion
+	// payload is the preimage to the htlc's payment hash.
+	if payload.AMPRecord() != nil {
+		rPreimage := lntypes.Preimage(payload.SharedSecret())
+		if !rPreimage.Matches(rHash) {
+			l.log.Errorf("onion shared secret %v cannot settle "+
+				"AMP htlc(%v)", rPreimage, rHash)
+
+			failure := NewLinkError(
+				lnwire.NewFailIncorrectDetails(
+					pd.Amount, heightNow,
+				),
+			)
+			l.sendHTLCError(pd, failure, obfuscator, true)
+
+			return nil
+		}
+	}
 
 	circuitKey := channeldb.CircuitKey{
 		ChanID: l.ShortChanID(),
@@ -2815,7 +2834,7 @@ func (l *channelLink) processExitHop(pd *lnwallet.PaymentDescriptor,
 	}
 
 	event, err := l.cfg.Registry.NotifyExitHopHtlc(
-		invoiceHash, pd.Amount, pd.Timeout, int32(heightNow),
+		rHash, pd.Amount, pd.Timeout, int32(heightNow),
 		circuitKey, l.hodlQueue.ChanIn(), payload,
 	)
 	if err != nil {
