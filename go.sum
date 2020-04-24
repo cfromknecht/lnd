@@ -64,6 +64,8 @@ github.com/btcsuite/websocket v0.0.0-20150119174127-31079b680792/go.mod h1:ghJtE
 github.com/btcsuite/winsvc v1.0.0 h1:J9B4L7e3oqhXOcm+2IuNApwzQec85lE+QaikUcCs+dk=
 github.com/btcsuite/winsvc v1.0.0/go.mod h1:jsenWakMcC0zFBFurPLEAyrnc/teJEM1O46fmI40EZs=
 github.com/cespare/xxhash v1.1.0/go.mod h1:XrSqR1VqqWfGrhpAt58auRo0WTKS1nRRg3ghfAqPWnc=
+github.com/cfromknecht/lightning-onion v0.0.0-20200424012325-41c236795aa9 h1:rsM1FsSECnm/d6kJxV9fsR2mz8J5IweBreqwz0ZNCEM=
+github.com/cfromknecht/lightning-onion v0.0.0-20200424012325-41c236795aa9/go.mod h1:rigfi6Af/KqsF7Za0hOgcyq2PNH4AN70AaMRxcJkff4=
 github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=
 github.com/coreos/bbolt v1.3.3 h1:n6AiVyVRKQFNb6mJlwESEvvLoDyiTzXX7ORAUlkeBdY=
 github.com/coreos/bbolt v1.3.3/go.mod h1:iRUV2dpdMOn7Bo10OQBFzIJO9kkE559Wcmn+qkEiiKk=
@@ -154,8 +156,6 @@ github.com/lightninglabs/neutrino v0.11.1-0.20200316235139-bffc52e8f200 h1:j4iZ1
 github.com/lightninglabs/neutrino v0.11.1-0.20200316235139-bffc52e8f200/go.mod h1:MlZmoKa7CJP3eR1s5yB7Rm5aSyadpKkxqAwLQmog7N0=
 github.com/lightninglabs/protobuf-hex-display v1.3.3-0.20191212020323-b444784ce75d h1:QWD/5MPnaZfUVP7P8wLa4M8Td2DI7XXHXt2vhVtUgGI=
 github.com/lightninglabs/protobuf-hex-display v1.3.3-0.20191212020323-b444784ce75d/go.mod h1:KDb67YMzoh4eudnzClmvs2FbiLG9vxISmLApUkCa4uI=
-github.com/lightningnetwork/lightning-onion v1.0.1 h1:qChGgS5+aPxFeR6JiUsGvanei1bn6WJpYbvosw/1604=
-github.com/lightningnetwork/lightning-onion v1.0.1/go.mod h1:rigfi6Af/KqsF7Za0hOgcyq2PNH4AN70AaMRxcJkff4=
 github.com/ltcsuite/ltcd v0.0.0-20190101042124-f37f8bf35796 h1:sjOGyegMIhvgfq5oaue6Td+hxZuf3tDC8lAPrFldqFw=
 github.com/ltcsuite/ltcd v0.0.0-20190101042124-f37f8bf35796/go.mod h1:3p7ZTf9V1sNPI5H8P3NkTFF4LuwMdPl2DodF60qAKqY=
 github.com/ltcsuite/ltcutil v0.0.0-20181217130922-17f3b04680b6/go.mod h1:8Vg/LTOO0KYa/vlHWJ6XZAevPQThGH5sufO0Hrou/lA=
