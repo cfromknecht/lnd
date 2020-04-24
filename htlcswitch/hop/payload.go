@@ -216,6 +216,7 @@ func ValidateParsedPayloadTypes(parsedTypes tlv.TypeMap,
 	_, hasLockTime := parsedTypes[record.LockTimeOnionType]
 	_, hasNextHop := parsedTypes[record.NextHopOnionType]
 	_, hasMPP := parsedTypes[record.MPPOnionType]
+	_, hasAMP := parsedTypes[record.AMPOnionType]
 
 	switch {
 
@@ -252,6 +253,23 @@ func ValidateParsedPayloadTypes(parsedTypes tlv.TypeMap,
 			Violation: IncludedViolation,
 			FinalHop:  isFinalHop,
 		}
+
+	// Intermediate nodes should never receive AMP fields.
+	case !isFinalHop && hasAMP:
+		return ErrInvalidPayload{
+			Type:      record.AMPOnionType,
+			Violation: IncludedViolation,
+			FinalHop:  isFinalHop,
+		}
+
+	// MPP record must be present if AMP record is present.
+	case isFinalHop && hasAMP && !hasMPP:
+		return ErrInvalidPayload{
+			Type:      record.AMPOnionType,
+			Violation: IncludedViolation,
+			FinalHop:  isFinalHop,
+		}
+
 	}
 
 	return nil
