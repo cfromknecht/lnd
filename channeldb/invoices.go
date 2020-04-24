@@ -276,6 +276,26 @@ type Invoice struct {
 	Htlcs map[CircuitKey]*InvoiceHTLC
 }
 
+// HTLCSet returns the set of accepted HTLCs belonging to an invoice. Passing a
+// nil setID will return all accepted HTLCs in the case of legacy or MPP.
+// Otherwise, the returned set will be filtered by the populated setID which is
+// used to retrieve AMP HTLC sets.
+func (i *Invoice) HTLCSet() map[CircuitKey]*InvoiceHTLC {
+	htlcSet := make(map[CircuitKey]*InvoiceHTLC)
+	for key, htlc := range i.Htlcs {
+		// Only consider accepted mpp htlcs. It is possible that there
+		// are htlcs registered in the invoice database that previously
+		// timed out and are in the canceled state now.
+		if htlc.State != HtlcStateAccepted {
+			continue
+		}
+
+		htlcSet[key] = htlc
+	}
+
+	return htlcSet
+}
+
 // HtlcState defines the states an htlc paying to an invoice can be in.
 type HtlcState uint8
 
