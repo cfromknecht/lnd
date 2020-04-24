@@ -120,6 +120,7 @@ const (
 	htlcStateType    tlv.Type = 15
 	mppTotalAmtType  tlv.Type = 17
 	setIDType        tlv.Type = 19
+	htlcPreimageType tlv.Type = 21
 
 	// A set of tlv type definitions used to serialize invoice bodiees.
 	//
@@ -321,6 +322,8 @@ type InvoiceHTLC struct {
 	MppTotalAmt lnwire.MilliSatoshi
 
 	SetID *[32]byte
+
+	Preimage *lntypes.Preimage
 
 	// AcceptHeight is the block height at which the invoice registry
 	// decided to accept this htlc as a payment to the invoice. At this
@@ -1114,6 +1117,13 @@ func serializeHtlcs(w io.Writer, htlcs map[CircuitKey]*InvoiceHTLC) error {
 			)
 			records = append(records, setIDRecord)
 		}
+		if htlc.Preimage != nil {
+			preimage32 := [32]byte(*htlc.Preimage)
+			preimageRecord := tlv.MakePrimitiveRecord(
+				htlcPreimageType, &preimage32,
+			)
+			records = append(records, preimageRecord)
+		}
 
 		// Convert the custom records to tlv.Record types that are ready
 		// for serialization.
@@ -1274,6 +1284,7 @@ func deserializeHtlcs(r io.Reader) (map[CircuitKey]*InvoiceHTLC, error) {
 			acceptTime, resolveTime uint64
 			amt, mppTotalAmt        uint64
 			setID                   = &[32]byte{}
+			preimage32              = &[32]byte{}
 		)
 		tlvStream, err := tlv.NewStream(
 			tlv.MakePrimitiveRecord(chanIDType, &chanID),
@@ -1288,6 +1299,7 @@ func deserializeHtlcs(r io.Reader) (map[CircuitKey]*InvoiceHTLC, error) {
 			tlv.MakePrimitiveRecord(htlcStateType, &state),
 			tlv.MakePrimitiveRecord(mppTotalAmtType, &mppTotalAmt),
 			tlv.MakePrimitiveRecord(setIDType, setID),
+			tlv.MakePrimitiveRecord(htlcPreimageType, preimage32),
 		)
 		if err != nil {
 			return nil, err
@@ -1302,6 +1314,12 @@ func deserializeHtlcs(r io.Reader) (map[CircuitKey]*InvoiceHTLC, error) {
 			setID = nil
 		}
 
+		var preimage *lntypes.Preimage
+		if _, ok := parsedTypes[htlcPreimageType]; ok {
+			pimg := lntypes.Preimage(*preimage32)
+			preimage = &pimg
+		}
+
 		key.ChanID = lnwire.NewShortChanIDFromInt(chanID)
 		htlc.AcceptTime = time.Unix(0, int64(acceptTime))
 		htlc.ResolveTime = time.Unix(0, int64(resolveTime))
@@ -1309,6 +1327,7 @@ func deserializeHtlcs(r io.Reader) (map[CircuitKey]*InvoiceHTLC, error) {
 		htlc.Amt = lnwire.MilliSatoshi(amt)
 		htlc.MppTotalAmt = lnwire.MilliSatoshi(mppTotalAmt)
 		htlc.SetID = setID
+		htlc.Preimage = preimage
 
 		// Reconstruct the custom records fields from the parsed types
 		// map return from the tlv parser.
@@ -1340,6 +1359,11 @@ func copyInvoiceHTLC(src *InvoiceHTLC) *InvoiceHTLC {
 	if src.SetID != nil {
 		setID := *src.SetID
 		result.SetID = &setID
+	}
+
+	if src.Preimage != nil {
+		preimage := *src.Preimage
+		result.Preimage = &preimage
 	}
 
 	return &result
