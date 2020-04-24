@@ -20,12 +20,14 @@ type invoiceUpdateCtx struct {
 	finalCltvRejectDelta int32
 	customRecords        record.CustomSet
 	mpp                  *record.MPP
+	amp                  *record.AMP
 }
 
 // log logs a message specific to this update context.
 func (i *invoiceUpdateCtx) log(s string) {
-	log.Debugf("Invoice(%x): %v, amt=%v, expiry=%v, circuit=%v, mpp=%v",
-		i.hash[:], s, i.amtPaid, i.expiry, i.circuitKey, i.mpp)
+	log.Debugf("Invoice(%x): %v, amt=%v, expiry=%v, circuit=%v, mpp=%v, "+
+		"amp=%v", i.hash[:], s, i.amtPaid, i.expiry, i.circuitKey,
+		i.mpp, i.amp)
 }
 
 // failRes is a helper function which creates a failure resolution with

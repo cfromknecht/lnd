@@ -734,6 +734,7 @@ func (i *InvoiceRegistry) NotifyExitHopHtlc(rHash lntypes.Hash,
 	payload Payload) (HtlcResolution, error) {
 
 	mpp := payload.MultiPath()
+	amp := payload.AMPRecord()
 
 	// Create the update context containing the relevant details of the
 	// incoming htlc.
@@ -746,6 +747,7 @@ func (i *InvoiceRegistry) NotifyExitHopHtlc(rHash lntypes.Hash,
 		finalCltvRejectDelta: i.cfg.FinalCltvRejectDelta,
 		customRecords:        payload.CustomRecords(),
 		mpp:                  mpp,
+		amp:                  amp,
 	}
 
 	// Process keysend if present. Do this outside of the lock, because
