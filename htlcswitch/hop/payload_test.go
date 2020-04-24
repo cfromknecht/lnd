@@ -8,7 +8,10 @@ import (
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
+	"github.com/lightningnetwork/lnd/tlv"
 )
+
+const unknownRequiredType byte = 0x42
 
 type decodePayloadTest struct {
 	name             string
@@ -82,9 +85,9 @@ var decodePayloadTests = []decodePayloadTest{
 	},
 	{
 		name:    "required type after omitted hop id",
-		payload: []byte{0x02, 0x00, 0x04, 0x00, 0x0a, 0x00},
+		payload: []byte{0x02, 0x00, 0x04, 0x00, unknownRequiredType, 0x00},
 		expErr: hop.ErrInvalidPayload{
-			Type:      10,
+			Type:      tlv.Type(unknownRequiredType),
 			Violation: hop.RequiredViolation,
 			FinalHop:  true,
 		},
@@ -92,10 +95,10 @@ var decodePayloadTests = []decodePayloadTest{
 	{
 		name: "required type after included hop id",
 		payload: []byte{0x02, 0x00, 0x04, 0x00, 0x06, 0x08, 0x01, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, unknownRequiredType, 0x00,
 		},
 		expErr: hop.ErrInvalidPayload{
-			Type:      10,
+			Type:      tlv.Type(unknownRequiredType),
 			Violation: hop.RequiredViolation,
 			FinalHop:  false,
 		},
