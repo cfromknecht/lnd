@@ -39,6 +39,8 @@ var (
 
 	payAddrIndexBucket = []byte("pay-addr-index")
 
+	setIDIndexBucket = []byte("set-id-index")
+
 	// numInvoicesKey is the name of key which houses the auto-incrementing
 	// invoice ID which is essentially used as a primary key. With each
 	// invoice inserted, the primary key is incremented by one. This key is
@@ -483,6 +485,12 @@ func (d *DB) AddInvoice(newInvoice *Invoice, paymentHash lntypes.Hash) (
 		if err != nil {
 			return err
 		}
+		setIDIndex, err := invoices.CreateBucketIfNotExists(
+			setIDIndexBucket,
+		)
+		if err != nil {
+			return err
+		}
 		addIndex, err := invoices.CreateBucketIfNotExists(
 			addIndexBucket,
 		)
@@ -497,6 +505,13 @@ func (d *DB) AddInvoice(newInvoice *Invoice, paymentHash lntypes.Hash) (
 		}
 		if payAddrIndex.Get(newInvoice.Terms.PaymentAddr[:]) != nil {
 			return ErrDuplicateInvoice
+		}
+		for _, htlc := range newInvoice.Htlcs {
+			if htlc.SetID != nil {
+				if setIDIndex.Get(htlc.SetID[:]) != nil {
+					return ErrDuplicateInvoice
+				}
+			}
 		}
 
 		// If the current running payment ID counter hasn't yet been
@@ -515,8 +530,8 @@ func (d *DB) AddInvoice(newInvoice *Invoice, paymentHash lntypes.Hash) (
 		}
 
 		newIndex, err := putInvoice(
-			invoices, invoiceIndex, payAddrIndex, addIndex,
-			newInvoice, invoiceNum, paymentHash,
+			invoices, invoiceIndex, payAddrIndex, setIDIndex,
+			addIndex, newInvoice, invoiceNum, paymentHash,
 		)
 		if err != nil {
 			return err
@@ -1014,7 +1029,7 @@ func (d *DB) InvoicesSettledSince(sinceSettleIndex uint64) ([]Invoice, error) {
 	return settledInvoices, nil
 }
 
-func putInvoice(invoices, invoiceIndex, payAddrIndex, addIndex kvdb.RwBucket,
+func putInvoice(invoices, invoiceIndex, payAddrIndex, setIDIndex, addIndex kvdb.RwBucket,
 	i *Invoice, invoiceNum uint32, paymentHash lntypes.Hash) (
 	uint64, error) {
 
@@ -1042,6 +1057,14 @@ func putInvoice(invoices, invoiceIndex, payAddrIndex, addIndex kvdb.RwBucket,
 	err = payAddrIndex.Put(i.Terms.PaymentAddr[:], invoiceKey[:])
 	if err != nil {
 		return 0, err
+	}
+	for _, htlc := range i.Htlcs {
+		if htlc.SetID != nil {
+			err = setIDIndex.Put(htlc.SetID[:], invoiceKey[:])
+			if err != nil {
+				return 0, err
+			}
+		}
 	}
 
 	// Next, we'll obtain the next add invoice index (sequence
