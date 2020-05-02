@@ -281,13 +281,17 @@ type Invoice struct {
 // nil setID will return all accepted HTLCs in the case of legacy or MPP.
 // Otherwise, the returned set will be filtered by the populated setID which is
 // used to retrieve AMP HTLC sets.
-func (i *Invoice) HTLCSet() map[CircuitKey]*InvoiceHTLC {
+func (i *Invoice) HTLCSet(setID *[32]byte) map[CircuitKey]*InvoiceHTLC {
 	htlcSet := make(map[CircuitKey]*InvoiceHTLC)
 	for key, htlc := range i.Htlcs {
 		// Only consider accepted mpp htlcs. It is possible that there
 		// are htlcs registered in the invoice database that previously
 		// timed out and are in the canceled state now.
 		if htlc.State != HtlcStateAccepted {
+			continue
+		}
+
+		if !htlc.IsInHTLCSet(setID) {
 			continue
 		}
 
@@ -351,6 +355,26 @@ type InvoiceHTLC struct {
 	CustomRecords record.CustomSet
 }
 
+// IsInHTLCSet returns true if this HTLC is part an HTLC set. If nil is passed,
+// this method returns true if this is an MPP HTLC. Otherwise, it only returns
+// true if the AMP HTLC's set id matches the populated setID.
+func (h *InvoiceHTLC) IsInHTLCSet(setID *[32]byte) bool {
+	wantAMPSet := setID != nil
+	isAMPHtlc := h.SetID != nil
+
+	// Non-AMP HTLCs cannot be part of AMP HTLC sets and, vice versa.
+	if wantAMPSet != isAMPHtlc {
+		return false
+	}
+
+	// Skip AMP HTLCs that have differing set ids.
+	if isAMPHtlc && *setID != *h.SetID {
+		return false
+	}
+
+	return true
+}
+
 // HtlcAcceptDesc describes the details of a newly accepted htlc.
 type HtlcAcceptDesc struct {
 	// AcceptHeight is the block height at which this htlc was accepted.
@@ -362,6 +386,10 @@ type HtlcAcceptDesc struct {
 	// MppTotalAmt is a field for mpp that indicates the expected total
 	// amount.
 	MppTotalAmt lnwire.MilliSatoshi
+
+	SetID *[32]byte
+
+	Preimage *lntypes.Preimage
 
 	// Expiry is the expiry height of this htlc.
 	Expiry uint32
@@ -393,6 +421,8 @@ type InvoiceStateUpdateDesc struct {
 
 	// Preimage must be set to the preimage when NewState is settled.
 	Preimage lntypes.Preimage
+
+	SetID *[32]byte
 }
 
 // InvoiceUpdateCallback is a callback used in the db transaction to update the
@@ -1420,6 +1450,11 @@ func (d *DB) updateInvoice(hash lntypes.Hash, invoices, settleIndex kvdb.RwBucke
 		return &invoice, nil
 	}
 
+	var setID *[32]byte
+	if update.State != nil {
+		setID = update.State.SetID
+	}
+
 	now := d.clock.Now()
 
 	// Update invoice state if the update descriptor indicates an invoice
@@ -1497,7 +1532,7 @@ func (d *DB) updateInvoice(hash lntypes.Hash, invoices, settleIndex kvdb.RwBucke
 		// The invoice state may have changed and this could have
 		// implications for the states of the individual htlcs. Align
 		// the htlc state with the current invoice state.
-		err := updateHtlc(now, htlc, invoice.State)
+		err := updateHtlc(now, htlc, invoice.State, setID)
 		if err != nil {
 			return nil, err
 		}
@@ -1607,15 +1642,21 @@ func cancelSingleHtlc(resolveTime time.Time, htlc *InvoiceHTLC,
 
 // updateHtlc aligns the state of an htlc with the given invoice state.
 func updateHtlc(resolveTime time.Time, htlc *InvoiceHTLC,
-	invState ContractState) error {
+	invState ContractState, setID *[32]byte) error {
 
 	switch invState {
 
 	case ContractSettled:
-		if htlc.State == HtlcStateAccepted {
-			htlc.State = HtlcStateSettled
-			htlc.ResolveTime = resolveTime
+		if htlc.State != HtlcStateAccepted {
+			return nil
 		}
+
+		if !htlc.IsInHTLCSet(setID) {
+			return nil
+		}
+
+		htlc.State = HtlcStateSettled
+		htlc.ResolveTime = resolveTime
 
 	case ContractCanceled:
 		switch htlc.State {

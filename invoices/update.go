@@ -21,6 +21,7 @@ type invoiceUpdateCtx struct {
 	customRecords        record.CustomSet
 	mpp                  *record.MPP
 	amp                  *record.AMP
+	sharedSecret         [32]byte
 }
 
 // log logs a message specific to this update context.
@@ -28,6 +29,18 @@ func (i *invoiceUpdateCtx) log(s string) {
 	log.Debugf("Invoice(%x): %v, amt=%v, expiry=%v, circuit=%v, mpp=%v, "+
 		"amp=%v", i.hash[:], s, i.amtPaid, i.expiry, i.circuitKey,
 		i.mpp, i.amp)
+}
+
+// setID returns an identifier that identifies other possible HTLCs that this
+// particular one is related to. If nil is returned this means the HTLC is an
+// MPP or legacy payment, otherwise the HTLC belongs AMP payment.
+func (i invoiceUpdateCtx) setID() *[32]byte {
+	if i.amp == nil {
+		return nil
+	}
+
+	setID := i.amp.SetID()
+	return &setID
 }
 
 // failRes is a helper function which creates a failure resolution with
@@ -95,6 +108,8 @@ func updateMpp(ctx *invoiceUpdateCtx,
 	inv *channeldb.Invoice) (*channeldb.InvoiceUpdateDesc,
 	HtlcResolution, error) {
 
+	setID := ctx.setID()
+
 	// Start building the accept descriptor.
 	acceptDesc := &channeldb.HtlcAcceptDesc{
 		Amt:           ctx.amtPaid,
@@ -102,6 +117,18 @@ func updateMpp(ctx *invoiceUpdateCtx,
 		AcceptHeight:  ctx.currentHeight,
 		MppTotalAmt:   ctx.mpp.TotalMsat(),
 		CustomRecords: ctx.customRecords,
+		SetID:         setID,
+	}
+
+	// For AMP, the preimage is the shared secret from the onion packet
+	// instead of the invoice secret.
+	preimage := inv.Terms.PaymentPreimage
+	if setID != nil {
+		preimage = lntypes.Preimage(ctx.sharedSecret)
+
+		// Set the preimage here so that we persist the AMP preimage if
+		// we decide to accept.
+		acceptDesc.Preimage = &preimage
 	}
 
 	// Only accept payments to open invoices. This behaviour differs from
@@ -130,7 +157,7 @@ func updateMpp(ctx *invoiceUpdateCtx,
 
 	// Check whether total amt matches other htlcs in the set.
 	var newSetTotal lnwire.MilliSatoshi
-	for _, htlc := range inv.HTLCSet() {
+	for _, htlc := range inv.HTLCSet(setID) {
 		if ctx.mpp.TotalMsat() != htlc.MppTotalAmt {
 			return nil, ctx.failRes(ResultHtlcSetTotalMismatch), nil
 		}
@@ -180,13 +207,17 @@ func updateMpp(ctx *invoiceUpdateCtx,
 		return &update, ctx.acceptRes(resultAccepted), nil
 	}
 
+	// The invoice is always settled with its own preimage, as this is
+	// checked by invoice state transition, even if this preimage wasn't
+	// used on any of the htlcs (in the case of AMP htlcs).
 	update.State = &channeldb.InvoiceStateUpdateDesc{
 		NewState: channeldb.ContractSettled,
 		Preimage: inv.Terms.PaymentPreimage,
+		SetID:    setID,
 	}
 
 	return &update, ctx.settleRes(
-		inv.Terms.PaymentPreimage, ResultSettled,
+		preimage, ResultSettled,
 	), nil
 }
 
@@ -215,7 +246,7 @@ func updateLegacy(ctx *invoiceUpdateCtx,
 	// Don't allow settling the invoice with an old style
 	// htlc if we are already in the process of gathering an
 	// mpp set.
-	for _, htlc := range inv.HTLCSet() {
+	for _, htlc := range inv.HTLCSet(nil) {
 		if htlc.MppTotalAmt > 0 {
 			return nil, ctx.failRes(ResultMppInProgress), nil
 		}

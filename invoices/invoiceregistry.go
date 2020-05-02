@@ -881,7 +881,7 @@ func (i *InvoiceRegistry) notifyExitHopHtlcLocked(
 		// Also settle any previously accepted htlcs. If a htlc is
 		// marked as settled, we should follow now and settle the htlc
 		// with our peer.
-		for key, htlc := range invoice.HTLCSet() {
+		for key, htlc := range invoice.HTLCSet(ctx.setID()) {
 			// Notify subscribers that the htlcs should be settled
 			// with our peer. Note that the outcome of the
 			// resolution is set based on the outcome of the single
