@@ -739,15 +739,6 @@ func (i *InvoiceRegistry) NotifyExitHopHtlc(rHash lntypes.Hash,
 	circuitKey channeldb.CircuitKey, hodlChan chan<- interface{},
 	payload Payload) (HtlcResolution, error) {
 
-	mpp := payload.MultiPath()
-	amp := payload.AMPRecord()
-
-	var payAddr *[32]byte
-	if mpp != nil {
-		addr := mpp.PaymentAddr()
-		payAddr = &addr
-	}
-
 	// Create the update context containing the relevant details of the
 	// incoming htlc.
 	updateCtx := invoiceUpdateCtx{
@@ -758,8 +749,8 @@ func (i *InvoiceRegistry) NotifyExitHopHtlc(rHash lntypes.Hash,
 		currentHeight:        currentHeight,
 		finalCltvRejectDelta: i.cfg.FinalCltvRejectDelta,
 		customRecords:        payload.CustomRecords(),
-		mpp:                  mpp,
-		amp:                  amp,
+		mpp:                  payload.MultiPath(),
+		amp:                  payload.AMPRecord(),
 	}
 
 	// Process keysend if present. Do this outside of the lock, because
@@ -790,6 +781,7 @@ func (i *InvoiceRegistry) NotifyExitHopHtlc(rHash lntypes.Hash,
 	// main event loop.
 	case *htlcAcceptResolution:
 		if r.autoRelease {
+			payAddr := updateCtx.payAddr()
 			err := i.startHtlcTimer(
 				rHash, payAddr, circuitKey, r.acceptTime,
 			)
@@ -819,12 +811,6 @@ func (i *InvoiceRegistry) notifyExitHopHtlcLocked(
 	ctx *invoiceUpdateCtx, hodlChan chan<- interface{}) (
 	HtlcResolution, error) {
 
-	var payAddr *[32]byte
-	if ctx.mpp != nil {
-		addr := ctx.mpp.PaymentAddr()
-		payAddr = &addr
-	}
-
 	// We'll attempt to settle an invoice matching this rHash on disk (if
 	// one exists). The callback will update the invoice state and/or htlcs.
 	var (
@@ -832,7 +818,7 @@ func (i *InvoiceRegistry) notifyExitHopHtlcLocked(
 		updateSubscribers bool
 	)
 	invoice, err := i.cdb.UpdateInvoice(
-		ctx.hash, payAddr,
+		ctx.hash, ctx.payAddr(),
 		func(inv *channeldb.Invoice) (
 			*channeldb.InvoiceUpdateDesc, error) {
 

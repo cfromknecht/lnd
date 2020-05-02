@@ -43,6 +43,15 @@ func (i invoiceUpdateCtx) setID() *[32]byte {
 	return &setID
 }
 
+func (i invoiceUpdateCtx) payAddr() *[32]byte {
+	if i.mpp == nil {
+		return nil
+	}
+
+	payAddr := i.mpp.PaymentAddr()
+	return &payAddr
+}
+
 // failRes is a helper function which creates a failure resolution with
 // the information contained in the invoiceUpdateCtx and the fail resolution
 // result provided.
