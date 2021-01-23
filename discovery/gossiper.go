@@ -233,6 +233,11 @@ type Config struct {
 	// This prevents ranges with old start times from causing us to dump the
 	// graph on connect.
 	IgnoreHistoricalFilters bool
+
+	// PinnedSyncers is a set of peers that will always transition to
+	// ActiveSync upon connection. These peers will never transition to
+	// PassiveSync.
+	PinnedSyncers PinnedSyncers
 }
 
 // AuthenticatedGossiper is a subsystem which is responsible for receiving
@@ -342,6 +347,7 @@ func New(cfg Config, selfKey *btcec.PublicKey) *AuthenticatedGossiper {
 			HistoricalSyncTicker:    cfg.HistoricalSyncTicker,
 			NumActiveSyncers:        cfg.NumActiveSyncers,
 			IgnoreHistoricalFilters: cfg.IgnoreHistoricalFilters,
+			PinnedSyncers:           cfg.PinnedSyncers,
 		}),
 	}
 

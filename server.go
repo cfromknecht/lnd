@@ -798,6 +798,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		MinimumBatchSize:        10,
 		SubBatchDelay:           time.Second * 5,
 		IgnoreHistoricalFilters: cfg.IgnoreHistoricalGossipFilters,
+		PinnedSyncers:           cfg.Gossip.PinnedSyncers,
 	},
 		s.identityECDH.PubKey(),
 	)
