@@ -10073,18 +10073,76 @@ func subscribeGraphNotifications(t *harnessTest, ctxb context.Context,
 	}
 }
 
+func waitForGraphSync(t *harnessTest, node *lntest.HarnessNode) {
+	err := wait.Predicate(func() bool {
+		ctxb := context.Background()
+		ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
+		info, err := node.GetInfo(ctxt, &lnrpc.GetInfoRequest{})
+		require.NoError(t.t, err)
+
+		return info.SyncedToGraph
+	}, 10*time.Second)
+	require.NoError(t.t, err)
+}
+
 func testGraphTopologyNotifications(net *lntest.NetworkHarness, t *harnessTest) {
+	t.t.Run("pinned", func(t *testing.T) {
+		ht := newHarnessTest(t, net)
+		testGraphTopologyNtfns(net, ht, true)
+	})
+	t.t.Run("unpinned", func(t *testing.T) {
+		ht := newHarnessTest(t, net)
+		testGraphTopologyNtfns(net, ht, false)
+	})
+}
+
+func testGraphTopologyNtfns(net *lntest.NetworkHarness, t *harnessTest, pinned bool) {
 	ctxb := context.Background()
 
 	const chanAmt = lnd.MaxBtcFundingAmount
 
-	alice, err := net.NewNode("alice", nil)
-	require.NoError(t.t, err)
-	defer shutdownAndAssert(net, t, alice)
-
+	// Spin up Bob first, since we will need to grab his pubkey when
+	// starting Alice to test pinned syncing.
 	bob, err := net.NewNode("bob", nil)
 	require.NoError(t.t, err)
 	defer shutdownAndAssert(net, t, bob)
+
+	// For unpinned syncing, start Alice as usual. Otherwise grab Bob's
+	// pubkey to include in his pinned syncer set.
+	var aliceArgs []string
+	if pinned {
+		ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
+		bobInfo, err := bob.GetInfo(ctxt, &lnrpc.GetInfoRequest{})
+		require.NoError(t.t, err)
+
+		aliceArgs = []string{
+			"--numgraphsyncpeers=1",
+			fmt.Sprintf("--gossip.pinned-syncers=%s",
+				bobInfo.IdentityPubkey),
+		}
+	}
+
+	alice, err := net.NewNode("alice", aliceArgs)
+	require.NoError(t.t, err)
+	defer shutdownAndAssert(net, t, alice)
+
+	// When testing pinnned syncing, we need to ensure Alice doesn't select
+	// Bob as her active sync peer. So we spin up a dummy node and wait for
+	// the historical sync to complete. This will exhaust Alice's active
+	// sync peer slots since she is configured to have at most 1.
+	if pinned {
+		dummy, err := net.NewNode("dummy", nil)
+		require.NoError(t.t, err)
+		defer shutdownAndAssert(net, t, dummy)
+
+		ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
+		err = net.EnsureConnected(ctxt, alice, dummy)
+		require.NoError(t.t, err)
+
+		// Wait to ensure the historical sync finishes and Dummy is promoted to
+		// be Alice's active sync peer.
+		waitForGraphSync(t, alice)
+	}
 
 	// Connect Alice and Bob.
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
