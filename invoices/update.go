@@ -3,6 +3,7 @@ package invoices
 import (
 	"errors"
 
+	"github.com/lightningnetwork/lnd/amp"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -26,11 +27,16 @@ type invoiceUpdateCtx struct {
 // invoiceRef returns an identifier that can be used to lookup or update the
 // invoice this HTLC is targeting.
 func (i *invoiceUpdateCtx) invoiceRef() channeldb.InvoiceRef {
-	if i.mpp != nil {
+	switch {
+	case i.amp != nil:
+		payAddr := i.mpp.PaymentAddr()
+		return channeldb.InvoiceRefByAddr(payAddr)
+	case i.mpp != nil:
 		payAddr := i.mpp.PaymentAddr()
 		return channeldb.InvoiceRefByHashAndAddr(i.hash, payAddr)
+	default:
+		return channeldb.InvoiceRefByHash(i.hash)
 	}
-	return channeldb.InvoiceRefByHash(i.hash)
 }
 
 // setID returns an identifier that identifies other possible HTLCs that this
@@ -130,6 +136,14 @@ func updateMpp(ctx *invoiceUpdateCtx,
 		CustomRecords: ctx.customRecords,
 	}
 
+	if ctx.amp != nil {
+		acceptDesc.AMP = &channeldb.InvoiceHtlcAMPData{
+			Record:   *ctx.amp,
+			Hash:     ctx.hash,
+			Preimage: nil,
+		}
+	}
+
 	// Only accept payments to open invoices. This behaviour differs from
 	// non-mpp payments that are accepted even after the invoice is settled.
 	// Because non-mpp payments don't have a payment address, this is needed
@@ -154,9 +168,18 @@ func updateMpp(ctx *invoiceUpdateCtx,
 		return nil, ctx.failRes(ResultHtlcSetTotalTooLow), nil
 	}
 
+	htlcSet := inv.HTLCSet(setID)
+
 	// Check whether total amt matches other htlcs in the set.
 	var newSetTotal lnwire.MilliSatoshi
-	for _, htlc := range inv.HTLCSet(setID) {
+	for _, htlc := range htlcSet {
+		// Only consider accepted mpp htlcs. It is possible that there
+		// are htlcs registered in the invoice database that previously
+		// timed out and are in the canceled state now.
+		if htlc.State != channeldb.HtlcStateAccepted {
+			continue
+		}
+
 		if ctx.mpp.TotalMsat() != htlc.MppTotalAmt {
 			return nil, ctx.failRes(ResultHtlcSetTotalMismatch), nil
 		}
@@ -206,15 +229,91 @@ func updateMpp(ctx *invoiceUpdateCtx,
 		return &update, ctx.acceptRes(resultAccepted), nil
 	}
 
-	update.State = &channeldb.InvoiceStateUpdateDesc{
-		NewState: channeldb.ContractSettled,
-		Preimage: inv.Terms.PaymentPreimage,
-		SetID:    setID,
+	var (
+		htlcPreimages map[channeldb.CircuitKey]lntypes.Preimage
+		htlcPreimage  lntypes.Preimage
+	)
+	if ctx.amp != nil {
+		// Create a slice containing all the child descriptors to be
+		// used for reconstruction. This should include all HTLCs
+		// currently in the HTLC set, plus the incoming HTLC.
+		childDescs := make([]amp.ChildDesc, 0, 1+len(htlcSet))
+
+		// Add the new HTLC's child descriptor at index 0.
+		childDescs = append(childDescs, amp.ChildDesc{
+			Share: ctx.amp.RootShare(),
+			Index: ctx.amp.ChildIndex(),
+		})
+
+		// Next, construct an index mapping the position in childDescs
+		// to a circuit key for all preexisting HTLCs.
+		indexToCircuitKey := make(map[int]channeldb.CircuitKey)
+
+		// Add the child descriptor for each HTLC in the HTLC set,
+		// recording it's position within the slice.
+		var htlcSetIndex int
+		for circuitKey, htlc := range htlcSet {
+			childDescs = append(childDescs, amp.ChildDesc{
+				Share: htlc.AMP.Record.RootShare(),
+				Index: htlc.AMP.Record.ChildIndex(),
+			})
+			indexToCircuitKey[htlcSetIndex] = circuitKey
+			htlcSetIndex++
+		}
+
+		// Using the child descriptors, reconstruct the root seed and
+		// derive the child hash/preimage pairs for each of the HTLCs.
+		children := amp.ReconstructChildren(childDescs...)
+
+		// Construct a closure that will failure the existing HTLC set
+		// and the new HTLC in case reconstruction failed.
+		failReconstruction := func() *HtlcFailResolution {
+			update.State = &channeldb.InvoiceStateUpdateDesc{
+				NewState: channeldb.ContractCanceled,
+				SetID:    setID,
+			}
+			return ctx.failRes(ResultAmpReconstruction)
+		}
+
+		// Validate that the derived child preimages match the hash of
+		// each HTLC's respective hash.
+		if ctx.hash != children[0].Hash {
+			failure := failReconstruction()
+			return &update, failure, nil
+		}
+		for idx, child := range children[1:] {
+			circuitKey := indexToCircuitKey[idx]
+			htlc := htlcSet[circuitKey]
+			if htlc.AMP.Hash != child.Hash {
+				failure := failReconstruction()
+				return &update, failure, nil
+			}
+		}
+
+		// Finally, construct the map of learned preimages indexed by
+		// circuit key, so that they can be persisted along with each
+		// HTLC when updating the invoice.
+		htlcPreimages = make(map[channeldb.CircuitKey]lntypes.Preimage)
+		htlcPreimages[ctx.circuitKey] = children[0].Preimage
+		for idx, child := range children[1:] {
+			circuitKey := indexToCircuitKey[idx]
+			htlcPreimages[circuitKey] = child.Preimage
+		}
+
+		// The preimage for _this_ HTLC will always be the first child.
+		htlcPreimage = children[0].Preimage
+	} else {
+		htlcPreimage = *inv.Terms.PaymentPreimage
 	}
 
-	return &update, ctx.settleRes(
-		*inv.Terms.PaymentPreimage, ResultSettled,
-	), nil
+	update.State = &channeldb.InvoiceStateUpdateDesc{
+		NewState:      channeldb.ContractSettled,
+		Preimage:      inv.Terms.PaymentPreimage,
+		HTLCPreimages: htlcPreimages,
+		SetID:         setID,
+	}
+
+	return &update, ctx.settleRes(htlcPreimage, ResultSettled), nil
 }
 
 // updateLegacy is a callback for DB.UpdateInvoice that contains the invoice

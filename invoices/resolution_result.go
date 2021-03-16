@@ -105,6 +105,10 @@ const (
 	// ResultMppInProgress is returned when we are busy receiving a mpp
 	// payment.
 	ResultMppInProgress
+
+	// ResultAmpReconstruction is returned when the derived child
+	// hash/preimage pairs were invalid for at least one HTLC in the set.
+	ResultAmpReconstruction
 )
 
 // String returns a string representation of the result.
@@ -161,6 +165,9 @@ func (f FailResolutionResult) FailureString() string {
 
 	case ResultMppInProgress:
 		return "mpp reception in progress"
+
+	case ResultAmpReconstruction:
+		return "amp reconstruction failed"
 
 	default:
 		return "unknown failure resolution result"
