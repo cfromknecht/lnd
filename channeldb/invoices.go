@@ -719,7 +719,10 @@ func validateInvoice(i *Invoice, paymentHash lntypes.Hash) error {
 		return err
 	}
 
-	if i.Terms.PaymentPreimage == nil && !i.HodlInvoice {
+	isAMP := i.Terms.Features.HasFeature(
+		lnwire.AMPOptional,
+	)
+	if i.Terms.PaymentPreimage == nil && !(i.HodlInvoice || isAMP) {
 		return errors.New("non-hodl invoices must have a preimage")
 	}
 
